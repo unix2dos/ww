@@ -16,7 +16,12 @@ func Normalize(items []Worktree) []Worktree {
 		if out[i].IsCurrent != out[j].IsCurrent {
 			return out[i].IsCurrent
 		}
-		if out[i].LastUsedAt > 0 && out[j].LastUsedAt > 0 && out[i].LastUsedAt != out[j].LastUsedAt {
+		iHasMRU := out[i].LastUsedAt > 0
+		jHasMRU := out[j].LastUsedAt > 0
+		if iHasMRU != jHasMRU {
+			return iHasMRU
+		}
+		if iHasMRU && out[i].LastUsedAt != out[j].LastUsedAt {
 			return out[i].LastUsedAt > out[j].LastUsedAt
 		}
 		if out[i].BranchLabel != out[j].BranchLabel {

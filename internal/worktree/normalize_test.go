@@ -35,7 +35,21 @@ func TestNormalizeFallsBackToDeterministicNameOrderingWhenMRUMissing(t *testing.
 
 	got := Normalize(items)
 
-	if got[1].BranchLabel != "alpha" || got[2].BranchLabel != "beta" || got[3].BranchLabel != "zeta" {
-		t.Fatalf("expected deterministic name fallback, got %#v", got)
+	if got[1].BranchLabel != "zeta" || got[2].BranchLabel != "alpha" || got[3].BranchLabel != "beta" {
+		t.Fatalf("expected MRU items before missing-MRU items, got %#v", got)
+	}
+}
+
+func TestNormalizeFallsBackToDeterministicNameOrderingAmongMissingMRU(t *testing.T) {
+	items := []Worktree{
+		{Path: "/repo/.worktrees/beta", BranchLabel: "beta"},
+		{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+	}
+
+	got := Normalize(items)
+
+	if got[1].BranchLabel != "alpha" || got[2].BranchLabel != "beta" {
+		t.Fatalf("expected deterministic name ordering among missing MRU items, got %#v", got)
 	}
 }
