@@ -27,10 +27,14 @@ func TestReleaseScriptBuildsExpectedArchives(t *testing.T) {
 	expected := []string{
 		filepath.Join(outDir, "wt-v0.1.0-darwin-arm64.tar.gz"),
 		filepath.Join(outDir, "wt-v0.1.0-linux-amd64.tar.gz"),
+		filepath.Join(outDir, "install-release.sh"),
 	}
 	for _, archive := range expected {
 		if _, err := os.Stat(archive); err != nil {
 			t.Fatalf("expected archive %s: %v", archive, err)
+		}
+		if strings.HasSuffix(archive, ".sh") {
+			continue
 		}
 		contents := listTar(t, archive)
 		for _, required := range []string{

@@ -34,3 +34,4 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/checksums.txt
+            dist/install-release.sh

@@ -9,24 +9,24 @@
 Install the latest release for your current platform:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/unix2dos/wt/main/scripts/install-release.sh | bash
+curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | bash
 source ~/.zshrc
 ```
 
 For Bash:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/unix2dos/wt/main/scripts/install-release.sh | bash -s -- --shell bash --rc-file ~/.bashrc
+curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | bash -s -- --shell bash --rc-file ~/.bashrc
 source ~/.bashrc
 ```
 
 Install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/unix2dos/wt/main/scripts/install-release.sh | WT_VERSION=vX.Y.Z bash
+curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | WT_VERSION=vX.Y.Z bash
 ```
 
-This path does not require Go. It downloads the matching release archive from GitHub and runs the bundled installer.
+This path does not require Go. It downloads the installer script from the latest GitHub Release, then fetches the matching release archive for your platform and runs the bundled installer.
 
 ### Install From Source
 
@@ -170,5 +170,6 @@ Artifacts are written to `dist/`:
 - `wt-vX.Y.Z-linux-arm64.tar.gz`
 - `wt-vX.Y.Z-linux-amd64.tar.gz`
 - `checksums.txt`
+- `install-release.sh`
 
 GitHub release publishing is wired through `.github/workflows/release.yml` and runs on tags matching `v*`.

@@ -10,8 +10,8 @@ TMPDIR_WT=""
 
 usage() {
   cat <<'EOF'
-Usage: curl -fsSL https://raw.githubusercontent.com/unix2dos/wt/main/scripts/install-release.sh | bash
-       curl -fsSL https://raw.githubusercontent.com/unix2dos/wt/main/scripts/install-release.sh | bash -s -- [install.sh args]
+Usage: curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | bash
+       curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | bash -s -- [install.sh args]
 
 Environment overrides:
   WT_VERSION           Install a specific version tag, e.g. v0.1.0

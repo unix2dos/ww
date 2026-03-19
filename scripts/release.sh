@@ -20,7 +20,7 @@ EOF
 VERSION="$1"
 
 mkdir -p "$OUT_DIR"
-rm -f "$OUT_DIR"/wt-"$VERSION"-*.tar.gz "$OUT_DIR"/checksums.txt
+rm -f "$OUT_DIR"/wt-"$VERSION"-*.tar.gz "$OUT_DIR"/checksums.txt "$OUT_DIR"/install-release.sh
 
 cd "$REPO_ROOT"
 
@@ -44,6 +44,9 @@ for target in $TARGETS; do
 
   rm -rf "$STAGE_ROOT"
 done
+
+cp scripts/install-release.sh "$OUT_DIR/install-release.sh"
+chmod +x "$OUT_DIR/install-release.sh"
 
 if command -v sha256sum >/dev/null 2>&1; then
   (
