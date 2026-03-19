@@ -19,6 +19,7 @@ type Deps interface {
 	CurrentRepoKey(ctx context.Context) (string, error)
 	ListWorktrees(ctx context.Context) (string, []worktree.Worktree, error)
 	SelectWorktreeWithFzf(ctx context.Context, items []worktree.Worktree) (worktree.Worktree, error)
+	SelectWorktreeWithTUI(in io.Reader, out io.Writer, items []worktree.Worktree) (worktree.Worktree, error)
 	CreateWorktree(ctx context.Context, name string) (string, error)
 	LoadWorktreeState(ctx context.Context, repoKey string) (map[string]int64, error)
 	TouchWorktreeState(ctx context.Context, repoKey, path string) error
@@ -49,6 +50,10 @@ func (d RealDeps) CurrentRepoKey(ctx context.Context) (string, error) {
 
 func (d RealDeps) SelectWorktreeWithFzf(ctx context.Context, items []worktree.Worktree) (worktree.Worktree, error) {
 	return ui.SelectWorktreeWithFzf(ctx, items, ui.ExecRunner{})
+}
+
+func (d RealDeps) SelectWorktreeWithTUI(in io.Reader, out io.Writer, items []worktree.Worktree) (worktree.Worktree, error) {
+	return ui.SelectWorktreeWithTUI(in, out, items, ui.OSRawMode{})
 }
 
 func (d RealDeps) CreateWorktree(ctx context.Context, name string) (string, error) {
@@ -134,16 +139,9 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 		}
 		warnStateIssue(errOut, warn)
 
-		selected, err := ui.SelectWorktreeWithTUI(in, errOut, items, ui.OSRawMode{})
+		selected, err := selectInteractiveWorktree(ctx, in, errOut, items, deps, false)
 		if err != nil {
-			if errors.Is(err, ui.ErrSelectionCanceled) {
-				return 130
-			}
-			if errors.Is(err, io.EOF) {
-				return 1
-			}
-			fmt.Fprintln(errOut, err)
-			return 1
+			return writeSelectionError(errOut, err)
 		}
 		fmt.Fprintln(out, selected.Path)
 		warnStateIssue(errOut, touchWorktreeStateBestEffort(ctx, deps, repoKey, selected.Path))
@@ -251,6 +249,22 @@ func orderedWorktrees(ctx context.Context, deps Deps) (string, []worktree.Worktr
 	return repoKey, worktree.Normalize(items), nil, nil
 }
 
+func selectInteractiveWorktree(ctx context.Context, in io.Reader, errOut io.Writer, items []worktree.Worktree, deps Deps, forceFzf bool) (worktree.Worktree, error) {
+	if forceFzf {
+		return deps.SelectWorktreeWithFzf(ctx, items)
+	}
+
+	selected, err := deps.SelectWorktreeWithFzf(ctx, items)
+	switch {
+	case err == nil:
+		return selected, nil
+	case errors.Is(err, ui.ErrFzfNotInstalled):
+		return deps.SelectWorktreeWithTUI(in, errOut, items)
+	default:
+		return worktree.Worktree{}, err
+	}
+}
+
 func selectByIndex(items []worktree.Worktree, index int) (worktree.Worktree, bool) {
 	for i := range items {
 		if items[i].Index == index {
@@ -267,6 +281,21 @@ func writeWorktreeError(errOut io.Writer, err error) int {
 	}
 	fmt.Fprintln(errOut, err)
 	return 1
+}
+
+func writeSelectionError(errOut io.Writer, err error) int {
+	switch {
+	case errors.Is(err, ui.ErrFzfNotInstalled):
+		fmt.Fprintln(errOut, "fzf is not installed")
+		return 3
+	case errors.Is(err, ui.ErrSelectionCanceled):
+		return 130
+	case errors.Is(err, io.EOF):
+		return 1
+	default:
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
 }
 
 func touchWorktreeStateBestEffort(ctx context.Context, deps Deps, repoKey, path string) error {
@@ -287,6 +316,7 @@ func printHelperHelp(out io.Writer) {
 	fmt.Fprintln(out, "Usage: ww-helper [switch-path|list|new-path|--help]")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "switch-path prints the selected git worktree path.")
+	fmt.Fprintln(out, "Interactive switch uses fzf when available, otherwise the built-in selector.")
 	fmt.Fprintln(out, "list prints the current worktree table.")
 	fmt.Fprintln(out, "new-path creates a worktree and prints its path.")
 }

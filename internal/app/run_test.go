@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -32,6 +33,9 @@ func TestRunHelperHelpPrintsUsageAndExitsZero(t *testing.T) {
 	}
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("create")) {
 		t.Fatalf("expected help to describe creation behavior, got %q", got)
+	}
+	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("fzf when available")) {
+		t.Fatalf("expected help to mention auto fzf routing, got %q", got)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
@@ -548,6 +552,7 @@ func TestRunSwitchPathInteractiveSelectionWritesTUIToStderrAndPathToStdout(t *te
 			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
 			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
 		},
+		fzfErr: ui.ErrFzfNotInstalled,
 		state: map[string]map[string]int64{
 			"/repo/.git": {
 				"/repo/.worktrees/alpha": 10,
@@ -574,6 +579,79 @@ func TestRunSwitchPathInteractiveSelectionWritesTUIToStderrAndPathToStdout(t *te
 	}
 }
 
+func TestRunSwitchPathInteractiveSelectionPrefersFzfWhenAvailable(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		touched: &touchRecord{},
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta"},
+		},
+		fzfSelected: worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta"},
+		tuiSelected: worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+	}
+
+	code := Run(context.Background(), nil, strings.NewReader("\x1b[B\r"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stdout.String() != "/repo/.worktrees/beta\n" {
+		t.Fatalf("expected fzf-selected path on stdout, got %q", stdout.String())
+	}
+	if deps.touched.repoKey != "/repo/.git" || deps.touched.path != "/repo/.worktrees/beta" {
+		t.Fatalf("expected state touch after fzf switch, got %#v", deps.touched)
+	}
+}
+
+func TestRunSwitchPathInteractiveSelectionFallsBackToTUIWhenFzfMissing(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		touched: &touchRecord{},
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		},
+		fzfErr: ui.ErrFzfNotInstalled,
+	}
+
+	code := Run(context.Background(), nil, strings.NewReader("\x1b[B\r"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stdout.String() != "/repo/.worktrees/alpha\n" {
+		t.Fatalf("expected tui-selected path on stdout, got %q", stdout.String())
+	}
+}
+
+func TestRunSwitchPathInteractiveSelectionReturns130WhenFzfCanceled(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		},
+		fzfErr: ui.ErrSelectionCanceled,
+	}
+
+	code := Run(context.Background(), nil, strings.NewReader("\x1b[B\r"), stdout, stderr, deps)
+
+	if code != 130 {
+		t.Fatalf("expected exit code 130, got %d", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout output, got %q", stdout.String())
+	}
+}
+
 func TestRunSwitchPathInteractiveSelectionReturnsNonZeroOnEOFWithoutSelection(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -583,6 +661,7 @@ func TestRunSwitchPathInteractiveSelectionReturnsNonZeroOnEOFWithoutSelection(t 
 			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
 			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
 		},
+		fzfErr: ui.ErrFzfNotInstalled,
 	}
 
 	code := Run(context.Background(), nil, strings.NewReader(""), stdout, stderr, deps)
@@ -602,6 +681,8 @@ type fakeDeps struct {
 	err         error
 	fzfSelected worktree.Worktree
 	fzfErr      error
+	tuiSelected worktree.Worktree
+	tuiErr      error
 	createPath  string
 	createErr   error
 	loadErr     error
@@ -640,6 +721,16 @@ func (f fakeDeps) SelectWorktreeWithFzf(context.Context, []worktree.Worktree) (w
 		return f.worktrees[0], nil
 	}
 	return worktree.Worktree{}, nil
+}
+
+func (f fakeDeps) SelectWorktreeWithTUI(in io.Reader, out io.Writer, items []worktree.Worktree) (worktree.Worktree, error) {
+	if f.tuiErr != nil {
+		return worktree.Worktree{}, f.tuiErr
+	}
+	if f.tuiSelected.Path != "" || f.tuiSelected.Index != 0 {
+		return f.tuiSelected, nil
+	}
+	return ui.SelectWorktreeWithTUI(in, out, items, ui.OSRawMode{})
 }
 
 func (f fakeDeps) CreateWorktree(context.Context, string) (string, error) {
