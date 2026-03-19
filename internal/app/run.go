@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -97,10 +98,11 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 			return 2
 		}
 
-		repoKey, items, err := orderedWorktrees(ctx, deps)
+		repoKey, items, warn, err := orderedWorktrees(ctx, deps)
 		if err != nil {
 			return writeWorktreeError(errOut, err)
 		}
+		warnStateIssue(errOut, warn)
 
 		selected, err := deps.SelectWorktreeWithFzf(ctx, items)
 		if err != nil {
@@ -116,20 +118,17 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 			}
 		}
 
-		if err := deps.TouchWorktreeState(ctx, repoKey, selected.Path); err != nil {
-			fmt.Fprintln(errOut, err)
-			return 1
-		}
-
 		fmt.Fprintln(out, selected.Path)
+		warnStateIssue(errOut, touchWorktreeStateBestEffort(ctx, deps, repoKey, selected.Path))
 		return 0
 	}
 
 	if len(args) == 0 {
-		repoKey, items, err := orderedWorktrees(ctx, deps)
+		repoKey, items, warn, err := orderedWorktrees(ctx, deps)
 		if err != nil {
 			return writeWorktreeError(errOut, err)
 		}
+		warnStateIssue(errOut, warn)
 
 		ui.RenderMenu(errOut, items)
 		index, err := ui.ReadSelection(in, errOut, len(items))
@@ -145,11 +144,8 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 			fmt.Fprintf(errOut, "worktree index %d out of range\n", index)
 			return 2
 		}
-		if err := deps.TouchWorktreeState(ctx, repoKey, selected.Path); err != nil {
-			fmt.Fprintln(errOut, err)
-			return 1
-		}
 		fmt.Fprintln(out, selected.Path)
+		warnStateIssue(errOut, touchWorktreeStateBestEffort(ctx, deps, repoKey, selected.Path))
 		return 0
 	}
 
@@ -164,29 +160,28 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 		return 2
 	}
 
-	repoKey, items, err := orderedWorktrees(ctx, deps)
+	repoKey, items, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
 		return writeWorktreeError(errOut, err)
 	}
+	warnStateIssue(errOut, warn)
 	selected, ok := selectByIndex(items, index)
 	if !ok {
 		fmt.Fprintf(errOut, "worktree index %d out of range\n", index)
 		return 2
 	}
-	if err := deps.TouchWorktreeState(ctx, repoKey, selected.Path); err != nil {
-		fmt.Fprintln(errOut, err)
-		return 1
-	}
 
 	fmt.Fprintln(out, selected.Path)
+	warnStateIssue(errOut, touchWorktreeStateBestEffort(ctx, deps, repoKey, selected.Path))
 	return 0
 }
 
 func runList(ctx context.Context, out io.Writer, errOut io.Writer, deps Deps) int {
-	_, items, err := orderedWorktrees(ctx, deps)
+	_, items, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
 		return writeWorktreeError(errOut, err)
 	}
+	warnStateIssue(errOut, warn)
 	if len(items) == 0 {
 		fmt.Fprintln(errOut, "no worktrees available")
 		return 1
@@ -217,32 +212,25 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 		return writeWorktreeError(errOut, err)
 	}
 
-	repoKey, _, err := deps.ListWorktrees(ctx)
-	if err != nil {
-		return writeWorktreeError(errOut, err)
-	}
-	if err := deps.TouchWorktreeState(ctx, repoKey, path); err != nil {
-		fmt.Fprintln(errOut, err)
-		return 1
-	}
-
 	fmt.Fprintln(out, path)
+	warnStateIssue(errOut, touchWorktreeStateBestEffort(ctx, deps, repoKeyFromWorktreePath(path), path))
 	return 0
 }
 
-func orderedWorktrees(ctx context.Context, deps Deps) (string, []worktree.Worktree, error) {
+func orderedWorktrees(ctx context.Context, deps Deps) (string, []worktree.Worktree, error, error) {
 	repoKey, items, err := deps.ListWorktrees(ctx)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	mru, err := deps.LoadWorktreeState(ctx, repoKey)
 	if err != nil {
-		return "", nil, err
+		normalized := worktree.Normalize(items)
+		return repoKey, normalized, fmt.Errorf("state load unavailable: %w", err), nil
 	}
 	for i := range items {
 		items[i].LastUsedAt = mru[items[i].Path]
 	}
-	return repoKey, worktree.Normalize(items), nil
+	return repoKey, worktree.Normalize(items), nil, nil
 }
 
 func selectByIndex(items []worktree.Worktree, index int) (worktree.Worktree, bool) {
@@ -261,6 +249,24 @@ func writeWorktreeError(errOut io.Writer, err error) int {
 	}
 	fmt.Fprintln(errOut, err)
 	return 1
+}
+
+func touchWorktreeStateBestEffort(ctx context.Context, deps Deps, repoKey, path string) error {
+	if err := deps.TouchWorktreeState(ctx, repoKey, path); err != nil {
+		return fmt.Errorf("state update skipped: %w", err)
+	}
+	return nil
+}
+
+func warnStateIssue(errOut io.Writer, err error) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintln(errOut, err)
+}
+
+func repoKeyFromWorktreePath(path string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(path)), ".git")
 }
 
 func printHelperHelp(out io.Writer) {

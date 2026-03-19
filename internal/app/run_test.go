@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -132,6 +133,82 @@ func TestRunNewPathPrintsSelectedPath(t *testing.T) {
 	}
 	if deps.touched.repoKey != "/repo/.git" || deps.touched.path != "/repo/.worktrees/alpha" {
 		t.Fatalf("expected state touch after successful create, got %#v", deps.touched)
+	}
+}
+
+func TestRunSwitchPathContinuesWhenStateLoadFails(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta"},
+		},
+		loadErr: errors.New("state unavailable"),
+		touched: &touchRecord{},
+	}
+
+	code := Run(context.Background(), []string{"switch-path", "2"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stdout.String() != "/repo/.worktrees/alpha\n" {
+		t.Fatalf("expected fallback ordering path on stdout, got %q", stdout.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("state load unavailable")) {
+		t.Fatalf("expected state load warning, got %q", stderr.String())
+	}
+}
+
+func TestRunSwitchPathContinuesWhenStateTouchFails(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		},
+		touchErr: errors.New("permission denied"),
+		touched:  &touchRecord{},
+	}
+
+	code := Run(context.Background(), []string{"switch-path", "2"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stdout.String() != "/repo/.worktrees/alpha\n" {
+		t.Fatalf("expected path on stdout, got %q", stdout.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("state update skipped")) {
+		t.Fatalf("expected state touch warning, got %q", stderr.String())
+	}
+}
+
+func TestRunNewPathContinuesWhenStateTouchFails(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey:    "/repo/.git",
+		createPath: "/repo/.worktrees/alpha",
+		touchErr:   errors.New("permission denied"),
+		touched:    &touchRecord{},
+	}
+
+	code := Run(context.Background(), []string{"new-path", "alpha"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stdout.String() != "/repo/.worktrees/alpha\n" {
+		t.Fatalf("expected path on stdout, got %q", stdout.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("state update skipped")) {
+		t.Fatalf("expected state touch warning, got %q", stderr.String())
 	}
 }
 
@@ -386,6 +463,8 @@ type fakeDeps struct {
 	fzfErr      error
 	createPath  string
 	createErr   error
+	loadErr     error
+	touchErr    error
 	state       map[string]map[string]int64
 	touched     *touchRecord
 }
@@ -426,6 +505,9 @@ func (f fakeDeps) CreateWorktree(context.Context, string) (string, error) {
 }
 
 func (f fakeDeps) LoadWorktreeState(_ context.Context, repoKey string) (map[string]int64, error) {
+	if f.loadErr != nil {
+		return nil, f.loadErr
+	}
 	if f.state == nil {
 		return map[string]int64{}, nil
 	}
@@ -440,6 +522,9 @@ func (f fakeDeps) LoadWorktreeState(_ context.Context, repoKey string) (map[stri
 }
 
 func (f fakeDeps) TouchWorktreeState(_ context.Context, repoKey, path string) error {
+	if f.touchErr != nil {
+		return f.touchErr
+	}
 	if f.touched != nil {
 		f.touched.repoKey = repoKey
 		f.touched.path = path

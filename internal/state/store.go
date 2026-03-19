@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -32,34 +33,61 @@ func NewStoreAt(path string) *Store {
 }
 
 func (s *Store) Load(repoKey string) (map[string]int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	state, err := s.readLocked()
-	if err != nil {
-		return nil, err
-	}
-	return cloneRepoState(state.Repos[repoKey]), nil
+	var out map[string]int64
+	err := s.withLock(func() error {
+		state, err := s.readLocked()
+		if err != nil {
+			return err
+		}
+		out = cloneRepoState(state.Repos[repoKey])
+		return nil
+	})
+	return out, err
 }
 
 func (s *Store) Touch(repoKey, path string) error {
+	return s.withLock(func() error {
+		state, err := s.readLocked()
+		if err != nil {
+			return err
+		}
+		if state.Repos == nil {
+			state.Repos = make(map[string]map[string]int64)
+		}
+		repo := state.Repos[repoKey]
+		if repo == nil {
+			repo = make(map[string]int64)
+		}
+		repo[path] = s.nowFunc().UnixNano()
+		state.Repos[repoKey] = repo
+		return s.writeLocked(state)
+	})
+}
+
+func (s *Store) withLock(fn func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	state, err := s.readLocked()
+	if s.path == "" {
+		return errors.New("state path is empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return err
+	}
+
+	lockPath := s.lockPath()
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
-	if state.Repos == nil {
-		state.Repos = make(map[string]map[string]int64)
+	defer lockFile.Close()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		return err
 	}
-	repo := state.Repos[repoKey]
-	if repo == nil {
-		repo = make(map[string]int64)
-	}
-	repo[path] = s.nowFunc().UnixNano()
-	state.Repos[repoKey] = repo
-	return s.writeLocked(state)
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+
+	return fn()
 }
 
 func (s *Store) readLocked() (diskState, error) {
@@ -120,6 +148,10 @@ func (s *Store) writeLocked(state diskState) error {
 		return err
 	}
 	return os.Rename(tmpName, s.path)
+}
+
+func (s *Store) lockPath() string {
+	return s.path + ".lock"
 }
 
 func (s *Store) nowFunc() time.Time {
