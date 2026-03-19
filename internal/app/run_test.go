@@ -29,6 +29,9 @@ func TestRunHelperHelpPrintsUsageAndExitsZero(t *testing.T) {
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("new-path")) {
 		t.Fatalf("expected help to mention new-path, got %q", got)
 	}
+	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("create")) {
+		t.Fatalf("expected help to describe creation behavior, got %q", got)
+	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
 	}
@@ -87,13 +90,10 @@ func TestRunNewPathPrintsSelectedPath(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
-		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
-		},
+		createPath: "/repo/.worktrees/alpha",
 	}
 
-	code := Run(context.Background(), []string{"new-path", "2"}, bytes.NewReader(nil), stdout, stderr, deps)
+	code := Run(context.Background(), []string{"new-path", "alpha"}, bytes.NewReader(nil), stdout, stderr, deps)
 
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)
@@ -103,6 +103,20 @@ func TestRunNewPathPrintsSelectedPath(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunNewPathRejectsMissingName(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"new-path"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("missing worktree name")) {
+		t.Fatalf("expected missing-name message, got %q", stderr.String())
 	}
 }
 
@@ -311,6 +325,8 @@ type fakeDeps struct {
 	err         error
 	fzfSelected worktree.Worktree
 	fzfErr      error
+	createPath  string
+	createErr   error
 }
 
 func (f fakeDeps) ListWorktrees(context.Context) ([]worktree.Worktree, error) {
@@ -331,4 +347,14 @@ func (f fakeDeps) SelectWorktreeWithFzf(context.Context, []worktree.Worktree) (w
 		return f.worktrees[0], nil
 	}
 	return worktree.Worktree{}, nil
+}
+
+func (f fakeDeps) CreateWorktree(context.Context, string) (string, error) {
+	if f.createErr != nil {
+		return "", f.createErr
+	}
+	if f.createPath != "" {
+		return f.createPath, nil
+	}
+	return "", nil
 }

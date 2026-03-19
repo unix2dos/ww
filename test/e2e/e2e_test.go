@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -52,6 +53,33 @@ func TestCLIListsWorktrees(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), "[1]") || !strings.Contains(stdout.String(), "/.worktrees/alpha") {
 		t.Fatalf("expected human-readable list output, got %q", stdout.String())
+	}
+}
+
+func TestCLICreatesNewWorktreePath(t *testing.T) {
+	repo := newTestRepo(t)
+	bin := buildCLI(t)
+
+	cmd := exec.CommandContext(context.Background(), bin, "new-path", "beta")
+	cmd.Dir = repo.Root
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
+	}
+
+	want := filepath.Join(repo.Root, ".worktrees", "beta")
+	if got := strings.TrimSpace(stdout.String()); got != want {
+		t.Fatalf("expected new worktree path %q, got %q", want, got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("expected worktree path to exist: %v", err)
 	}
 }
 
