@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-REPO="${WT_RELEASE_REPO:-unix2dos/wt}"
+REPO="${WT_RELEASE_REPO:-unix2dos/ww}"
 API_URL="${WT_RELEASE_API_URL:-https://api.github.com/repos/$REPO/releases/latest}"
 TARBALL_URL="${WT_TARBALL_URL:-}"
 VERSION="${WT_VERSION:-}"
@@ -10,12 +10,12 @@ TMPDIR_WT=""
 
 usage() {
   cat <<'EOF'
-Usage: curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | bash
-       curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | bash -s -- [install.sh args]
+Usage: curl -fsSL https://github.com/unix2dos/ww/releases/latest/download/install-release.sh | bash
+       curl -fsSL https://github.com/unix2dos/ww/releases/latest/download/install-release.sh | bash -s -- [install.sh args]
 
 Environment overrides:
   WT_VERSION           Install a specific version tag, e.g. v0.1.0
-  WT_RELEASE_REPO      Override GitHub repo, default unix2dos/wt
+  WT_RELEASE_REPO      Override GitHub repo, default unix2dos/ww
   WT_RELEASE_API_URL   Override latest release API endpoint
   WT_TARBALL_URL       Override archive URL directly
 EOF

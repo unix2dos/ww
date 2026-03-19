@@ -9,21 +9,21 @@
 Install the latest release for your current platform:
 
 ```bash
-curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | bash
+curl -fsSL https://github.com/unix2dos/ww/releases/latest/download/install-release.sh | bash
 source ~/.zshrc
 ```
 
 For Bash:
 
 ```bash
-curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | bash -s -- --shell bash --rc-file ~/.bashrc
+curl -fsSL https://github.com/unix2dos/ww/releases/latest/download/install-release.sh | bash -s -- --shell bash --rc-file ~/.bashrc
 source ~/.bashrc
 ```
 
 Install a specific version:
 
 ```bash
-curl -fsSL https://github.com/unix2dos/wt/releases/latest/download/install-release.sh | WT_VERSION=vX.Y.Z bash
+curl -fsSL https://github.com/unix2dos/ww/releases/latest/download/install-release.sh | WT_VERSION=vX.Y.Z bash
 ```
 
 This path does not require Go. It downloads the installer script from the latest GitHub Release, then fetches the matching release archive for your platform and runs the bundled installer.
@@ -31,8 +31,8 @@ This path does not require Go. It downloads the installer script from the latest
 ### Install From Source
 
 ```bash
-git clone https://github.com/unix2dos/wt.git
-cd wt
+git clone https://github.com/unix2dos/ww.git
+cd ww
 bash install.sh
 source ~/.zshrc
 ```
