@@ -48,15 +48,70 @@ If you installed into Bash, reload `~/.bashrc` instead.
 
 ## Usage
 
+`wt` 只处理“当前仓库”的 worktree。你需要在某个 Git 仓库或它的 worktree 目录里运行它。
+
+### Interactive Pick
+
 ```bash
 wt
-wt --fzf
+```
+
+This prints a numbered menu like:
+
+```text
+[1] * main /path/to/repo
+[2]   feat-a /path/to/repo/.worktrees/feat-a
+Select a worktree [number]:
+```
+
+Enter a number and `wt` prints only the selected path to `stdout`.
+
+### Direct Index
+
+```bash
 wt 2
+```
+
+Useful for scripting:
+
+```bash
+target="$(wt 2)"
+cd "$target"
+```
+
+### Fzf Mode
+
+```bash
+wt --fzf
+```
+
+This opens `fzf`, searches by the non-index columns, and prints the selected path.
+
+### Switch Current Shell
+
+```bash
 cwt
+cwt 2
 cwt --fzf
 ```
 
-`wt` prints the selected worktree path. `cwt` is the shell wrapper that changes the current shell directory after `wt` returns a path.
+`cwt` is the shell wrapper. It calls `wt`, reads the returned path, and runs `cd` in your current shell session.
+
+### Typical Flow
+
+```bash
+cd /path/to/repo
+git worktree list
+wt
+cwt --fzf
+```
+
+### Exit Behavior
+
+- `0`: success
+- `2`: invalid user input such as a bad index or extra args
+- `3`: environment problem such as not being in a Git repo or missing `fzf`
+- `130`: `fzf` selection canceled
 
 ## Smoke Test Matrix
 
