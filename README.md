@@ -1,8 +1,10 @@
 # ww
 
-`ww` is a shell-first Git worktree tool for the current repository.
+`ww` is a shell-first Git worktree tool for the current repository, with `fzf`-powered interactive switching and a built-in selector fallback.
 
 ## Install
+
+For the best interactive workflow, install `fzf`. If `fzf` is not available, `ww` falls back to the built-in arrow-key selector automatically.
 
 ### One-Line Install
 

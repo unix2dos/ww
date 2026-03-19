@@ -49,6 +49,7 @@ func SelectWorktreeWithFzf(ctx context.Context, items []worktree.Worktree, runne
 		"--no-sort",
 		"--delimiter=\t",
 		"--nth=2..",
+		"--pointer=*",
 		"--prompt=Select a worktree> ",
 	)
 	if err != nil {

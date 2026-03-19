@@ -571,7 +571,7 @@ func TestRunSwitchPathInteractiveSelectionWritesTUIToStderrAndPathToStdout(t *te
 	if !bytes.Contains(stderr.Bytes(), []byte("Enter to confirm")) {
 		t.Fatalf("expected tui instructions on stderr, got %q", stderr.String())
 	}
-	if !bytes.Contains(stderr.Bytes(), []byte("> [2]   alpha /repo/.worktrees/alpha")) {
+	if !bytes.Contains(stderr.Bytes(), []byte("* [2]   alpha /repo/.worktrees/alpha")) {
 		t.Fatalf("expected active row on stderr, got %q", stderr.String())
 	}
 	if deps.touched.repoKey != "/repo/.git" || deps.touched.path != "/repo/.worktrees/alpha" {

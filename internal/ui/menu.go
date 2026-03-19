@@ -25,7 +25,7 @@ func formatMenuRow(item worktree.Worktree) string {
 func formatTUIRow(item worktree.Worktree, active bool) string {
 	prefix := " "
 	if active {
-		prefix = ">"
+		prefix = "*"
 	}
 	return fmt.Sprintf("%s %s", prefix, formatMenuRow(item))
 }

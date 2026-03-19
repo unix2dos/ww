@@ -9,15 +9,12 @@ import (
 )
 
 func CreateWorktree(ctx context.Context, runner Runner, name string) (string, error) {
-	rootOut, rootErr, err := runner.Run(ctx, "git", "rev-parse", "--show-toplevel")
+	currentPath, repoKey, err := currentRepoContext(ctx, runner)
 	if err != nil {
-		if isNotGitRepository(err, rootOut, rootErr) {
-			return "", ErrNotGitRepository
-		}
-		return "", commandError("git rev-parse --show-toplevel", err, rootErr)
+		return "", err
 	}
 
-	root := strings.TrimSpace(string(rootOut))
+	root := repositoryRoot(currentPath, repoKey)
 	target := filepath.Join(root, ".worktrees", name)
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir worktree parent: %w", err)
@@ -32,6 +29,13 @@ func CreateWorktree(ctx context.Context, runner Runner, name string) (string, er
 	}
 
 	return target, nil
+}
+
+func repositoryRoot(currentPath, repoKey string) string {
+	if filepath.Base(repoKey) == ".git" {
+		return filepath.Dir(repoKey)
+	}
+	return filepath.Clean(currentPath)
 }
 
 func commandError(prefix string, err error, stderr []byte) error {

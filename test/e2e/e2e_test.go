@@ -190,6 +190,35 @@ func TestCLICreatesNewWorktreePath(t *testing.T) {
 	}
 }
 
+func TestCLICreatesNewWorktreePathFromLinkedWorktreeAtRepositoryRoot(t *testing.T) {
+	repo := newTestRepo(t)
+	runGit(t, repo.Root, "branch", "abc")
+	linked := repo.AddWorktree(t, "abc")
+	bin := buildCLI(t)
+
+	cmd := exec.CommandContext(context.Background(), bin, "new-path", "feature/lw-0320")
+	cmd.Dir = linked
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
+	}
+
+	want := filepath.Join(repo.Root, ".worktrees", "feature", "lw-0320")
+	if got := strings.TrimSpace(stdout.String()); got != want {
+		t.Fatalf("expected new worktree path %q, got %q", want, got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("expected worktree path to exist: %v", err)
+	}
+}
+
 func projectRoot(t *testing.T) string {
 	t.Helper()
 

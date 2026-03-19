@@ -22,7 +22,7 @@ func TestRenderTUIShowsCurrentMarkerAndActiveRow(t *testing.T) {
 	if !strings.Contains(got, "  [1] * main /repo") {
 		t.Fatalf("expected current row, got %q", got)
 	}
-	if !strings.Contains(got, "> [2]   feat-a /repo/.worktrees/feat-a") {
+	if !strings.Contains(got, "* [2]   feat-a /repo/.worktrees/feat-a") {
 		t.Fatalf("expected active row, got %q", got)
 	}
 	if !strings.Contains(got, "Enter to confirm") {
@@ -48,7 +48,7 @@ func TestSelectWorktreeWithTUIArrowDownThenEnterReturnsSelectedWorktree(t *testi
 	if got.Path != "/repo/.worktrees/feat-a" {
 		t.Fatalf("expected second worktree, got %#v", got)
 	}
-	if !strings.Contains(out.String(), "> [2]   feat-a /repo/.worktrees/feat-a") {
+	if !strings.Contains(out.String(), "* [2]   feat-a /repo/.worktrees/feat-a") {
 		t.Fatalf("expected moved selection to render, got %q", out.String())
 	}
 }

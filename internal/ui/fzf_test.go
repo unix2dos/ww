@@ -42,6 +42,9 @@ func TestSelectWorktreeWithFzfReturnsSelectedWorktree(t *testing.T) {
 	if !strings.Contains(strings.Join(runner.gotArgs, " "), "--nth=2..") {
 		t.Fatalf("expected fzf to search non-index fields without rewriting output, args=%q", runner.gotArgs)
 	}
+	if !strings.Contains(strings.Join(runner.gotArgs, " "), "--pointer=*") {
+		t.Fatalf("expected fzf pointer marker to follow active selection, args=%q", runner.gotArgs)
+	}
 }
 
 func TestSelectWorktreeWithFzfReturnsErrFzfNotInstalled(t *testing.T) {

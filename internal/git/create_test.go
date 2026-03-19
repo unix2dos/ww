@@ -74,6 +74,32 @@ func TestCreateWorktreeReturnsCommandError(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreeUsesRepositoryRootWhenRunInsideLinkedWorktree(t *testing.T) {
+	repoRoot := t.TempDir()
+	currentWorktree := filepath.Join(repoRoot, ".worktrees", "abc")
+	runner := &createFakeRunner{
+		outputs: map[string]string{
+			key("git", "rev-parse", "--show-toplevel"):                         currentWorktree + "\n",
+			key("git", "-C", currentWorktree, "rev-parse", "--git-common-dir"): filepath.Join(repoRoot, ".git") + "\n",
+		},
+	}
+
+	got, err := CreateWorktree(context.Background(), runner, "feat-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := filepath.Join(repoRoot, ".worktrees", "feat-a")
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+
+	wantCmd := key("git", "-C", repoRoot, "worktree", "add", "-b", "feat-a", filepath.Join(".worktrees", "feat-a"), "HEAD")
+	if _, ok := runner.commands[wantCmd]; !ok {
+		t.Fatalf("expected command %q to be executed, got %#v", wantCmd, runner.commands)
+	}
+}
+
 type createFakeRunner struct {
 	outputs  map[string]string
 	stderr   map[string]string
