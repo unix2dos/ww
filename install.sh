@@ -38,6 +38,40 @@ strip_managed_block() {
   mv "$tmp" "$rc_file"
 }
 
+collect_rc_files() {
+  local -a rc_files=()
+  local candidate existing seen
+
+  for candidate in "$RC_FILE" "$HOME/.zshrc" "$HOME/.bashrc" "${ZDOTDIR:-}/.zshrc"; do
+    [ -n "$candidate" ] || continue
+    seen=0
+    if [ "${#rc_files[@]}" -gt 0 ]; then
+      for existing in "${rc_files[@]}"; do
+        if [ "$existing" = "$candidate" ]; then
+          seen=1
+          break
+        fi
+      done
+    fi
+    [ "$seen" -eq 1 ] && continue
+    rc_files+=("$candidate")
+  done
+
+  if [ "${#rc_files[@]}" -gt 0 ]; then
+    printf '%s\n' "${rc_files[@]}"
+  fi
+}
+
+clean_managed_blocks() {
+  local rc_file
+
+  while IFS= read -r rc_file; do
+    [ -n "$rc_file" ] || continue
+    strip_managed_block "$rc_file" "$OLD_RC_MARKER_BEGIN" "$OLD_RC_MARKER_END"
+    strip_managed_block "$rc_file" "$RC_MARKER_BEGIN" "$RC_MARKER_END"
+  done
+}
+
 parse_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -166,8 +200,10 @@ install_binary() {
 
 parse_args "$@"
 install_binary
-
 RC_TARGET="$(choose_rc_file)"
+clean_managed_blocks <<EOF
+$(collect_rc_files)
+EOF
 append_shell_wrapper "$RC_TARGET" "$BIN_DIR/ww"
 
 printf 'Installed helper binary to %s\n' "$BIN_DIR/ww"

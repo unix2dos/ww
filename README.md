@@ -102,11 +102,7 @@ Enter a number and `ww` switches your current shell into that worktree.
 ww 2
 ```
 
-Useful for scripting:
-
-```bash
-ww 2
-```
+Use this for a direct jump to a known worktree.
 
 ### Fzf Mode
 
@@ -114,7 +110,7 @@ ww 2
 ww --fzf
 ```
 
-This opens `fzf`, searches by the non-index columns, and prints the selected path.
+This opens `fzf`, searches by the non-index columns, and switches into the selected worktree.
 
 ### Switch Current Shell
 
@@ -131,6 +127,8 @@ cd /path/to/repo
 git worktree list
 ww
 ```
+
+`ww` and `ww 2` both switch the current shell into the selected worktree.
 
 ### Exit Behavior
 

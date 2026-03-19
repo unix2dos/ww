@@ -125,6 +125,63 @@ func TestUninstallMigratesOldWtState(t *testing.T) {
 	}
 }
 
+func TestUninstallMigratesOldWtStateAcrossCommonRcFiles(t *testing.T) {
+	home := t.TempDir()
+	zshrc := filepath.Join(home, ".zshrc")
+	bashrc := filepath.Join(home, ".bashrc")
+	if err := os.WriteFile(zshrc, []byte("# wt shell wrapper begin\nold-zsh\n# wt shell wrapper end\n"), 0o644); err != nil {
+		t.Fatalf("write zsh rc file: %v", err)
+	}
+	if err := os.WriteFile(bashrc, []byte("# wt shell wrapper begin\nold-bash\n# wt shell wrapper end\n"), 0o644); err != nil {
+		t.Fatalf("write bash rc file: %v", err)
+	}
+
+	runUninstall(t, home, "--shell", "zsh")
+
+	for _, rcPath := range []string{zshrc, bashrc} {
+		data, err := os.ReadFile(rcPath)
+		if err != nil {
+			t.Fatalf("read rc file %s: %v", rcPath, err)
+		}
+		if strings.Contains(string(data), "wt shell wrapper begin") {
+			t.Fatalf("expected old wt block removed from %s, got %q", rcPath, string(data))
+		}
+	}
+}
+
+func TestInstallMigratesOldWtStateAcrossCommonRcFiles(t *testing.T) {
+	home := t.TempDir()
+	zshrc := filepath.Join(home, ".zshrc")
+	bashrc := filepath.Join(home, ".bashrc")
+	if err := os.WriteFile(zshrc, []byte("# wt shell wrapper begin\nold-zsh\n# wt shell wrapper end\n"), 0o644); err != nil {
+		t.Fatalf("write zsh rc file: %v", err)
+	}
+	if err := os.WriteFile(bashrc, []byte("# wt shell wrapper begin\nold-bash\n# wt shell wrapper end\n"), 0o644); err != nil {
+		t.Fatalf("write bash rc file: %v", err)
+	}
+
+	runInstall(t, home, "--shell", "zsh")
+
+	zshData, err := os.ReadFile(zshrc)
+	if err != nil {
+		t.Fatalf("read zsh rc file: %v", err)
+	}
+	if strings.Contains(string(zshData), "wt shell wrapper begin") {
+		t.Fatalf("expected old wt block removed from zsh rc, got %q", string(zshData))
+	}
+	if !strings.Contains(string(zshData), "ww shell wrapper begin") {
+		t.Fatalf("expected ww block in zsh rc, got %q", string(zshData))
+	}
+
+	bashData, err := os.ReadFile(bashrc)
+	if err != nil {
+		t.Fatalf("read bash rc file: %v", err)
+	}
+	if strings.Contains(string(bashData), "wt shell wrapper begin") {
+		t.Fatalf("expected old wt block removed from bash rc, got %q", string(bashData))
+	}
+}
+
 func TestWwChangesDirectoryOnSuccess(t *testing.T) {
 	home := t.TempDir()
 	rcPath := filepath.Join(home, ".zshrc")
