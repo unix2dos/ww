@@ -41,9 +41,18 @@ func TestRunSwitchPathPrintsSelectedPath(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		touched: &touchRecord{},
 		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta"},
+		},
+		state: map[string]map[string]int64{
+			"/repo/.git": {
+				"/repo/.worktrees/alpha": 10,
+				"/repo/.worktrees/beta":  20,
+			},
 		},
 	}
 
@@ -52,11 +61,14 @@ func TestRunSwitchPathPrintsSelectedPath(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
-	if stdout.String() != "/repo/.worktrees/alpha\n" {
+	if stdout.String() != "/repo/.worktrees/beta\n" {
 		t.Fatalf("expected selected path on stdout, got %q", stdout.String())
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+	if deps.touched.repoKey != "/repo/.git" || deps.touched.path != "/repo/.worktrees/beta" {
+		t.Fatalf("expected state touch after successful switch, got %#v", deps.touched)
 	}
 }
 
@@ -64,9 +76,18 @@ func TestRunListPrintsMenuWithoutPrompt(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
+		touched: &touchRecord{},
+		repoKey: "/repo/.git",
 		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta"},
+		},
+		state: map[string]map[string]int64{
+			"/repo/.git": {
+				"/repo/.worktrees/alpha": 10,
+				"/repo/.worktrees/beta":  20,
+			},
 		},
 	}
 
@@ -77,6 +98,9 @@ func TestRunListPrintsMenuWithoutPrompt(t *testing.T) {
 	}
 	if stdout.String() == "" {
 		t.Fatal("expected list output on stdout")
+	}
+	if strings.Index(stdout.String(), "/repo/.worktrees/beta") > strings.Index(stdout.String(), "/repo/.worktrees/alpha") {
+		t.Fatalf("expected MRU ordering in list output, got %q", stdout.String())
 	}
 	if bytes.Contains(stdout.Bytes(), []byte("Select a worktree")) {
 		t.Fatalf("expected no prompt in list output, got %q", stdout.String())
@@ -91,6 +115,8 @@ func TestRunNewPathPrintsSelectedPath(t *testing.T) {
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
 		createPath: "/repo/.worktrees/alpha",
+		repoKey:    "/repo/.git",
+		touched:    &touchRecord{},
 	}
 
 	code := Run(context.Background(), []string{"new-path", "alpha"}, bytes.NewReader(nil), stdout, stderr, deps)
@@ -103,6 +129,9 @@ func TestRunNewPathPrintsSelectedPath(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+	if deps.touched.repoKey != "/repo/.git" || deps.touched.path != "/repo/.worktrees/alpha" {
+		t.Fatalf("expected state touch after successful create, got %#v", deps.touched)
 	}
 }
 
@@ -124,9 +153,11 @@ func TestRunRejectsExtraArgsAfterSwitchPath(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		touched: &touchRecord{},
 		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
 		},
 	}
 
@@ -177,8 +208,10 @@ func TestRunRejectsOutOfRangeIndex(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		touched: &touchRecord{},
 		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
 		},
 	}
 
@@ -196,11 +229,18 @@ func TestRunSwitchPathFzfModePrintsSelectedPath(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		touched: &touchRecord{},
 		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
 		},
-		fzfSelected: worktree.Worktree{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		fzfSelected: worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		state: map[string]map[string]int64{
+			"/repo/.git": {
+				"/repo/.worktrees/alpha": 10,
+			},
+		},
 	}
 
 	code := Run(context.Background(), []string{"switch-path", "--fzf"}, bytes.NewReader(nil), stdout, stderr, deps)
@@ -214,14 +254,19 @@ func TestRunSwitchPathFzfModePrintsSelectedPath(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
 	}
+	if deps.touched.repoKey != "/repo/.git" || deps.touched.path != "/repo/.worktrees/alpha" {
+		t.Fatalf("expected state touch after successful fzf switch, got %#v", deps.touched)
+	}
 }
 
 func TestRunSwitchPathFzfModeReturnsExit3WhenFzfMissing(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		touched: &touchRecord{},
 		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
 		},
 		fzfErr: ui.ErrFzfNotInstalled,
 	}
@@ -240,9 +285,11 @@ func TestRunSwitchPathFzfModeReturns130WhenCanceled(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		touched: &touchRecord{},
 		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
 		},
 		fzfErr: ui.ErrSelectionCanceled,
 	}
@@ -278,9 +325,16 @@ func TestRunSwitchPathInteractiveSelectionWritesMenuToStderrAndPathToStdout(t *t
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		touched: &touchRecord{},
 		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		},
+		state: map[string]map[string]int64{
+			"/repo/.git": {
+				"/repo/.worktrees/alpha": 10,
+			},
 		},
 	}
 
@@ -298,15 +352,19 @@ func TestRunSwitchPathInteractiveSelectionWritesMenuToStderrAndPathToStdout(t *t
 	if !bytes.Contains(stderr.Bytes(), []byte("Select a worktree")) {
 		t.Fatalf("expected prompt on stderr, got %q", stderr.String())
 	}
+	if deps.touched.repoKey != "/repo/.git" || deps.touched.path != "/repo/.worktrees/alpha" {
+		t.Fatalf("expected state touch after interactive switch, got %#v", deps.touched)
+	}
 }
 
 func TestRunSwitchPathInteractiveSelectionReturnsNonZeroOnEOFWithoutSelection(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	deps := fakeDeps{
+		repoKey: "/repo/.git",
 		worktrees: []worktree.Worktree{
-			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
 		},
 	}
 
@@ -321,19 +379,27 @@ func TestRunSwitchPathInteractiveSelectionReturnsNonZeroOnEOFWithoutSelection(t 
 }
 
 type fakeDeps struct {
+	repoKey     string
 	worktrees   []worktree.Worktree
 	err         error
 	fzfSelected worktree.Worktree
 	fzfErr      error
 	createPath  string
 	createErr   error
+	state       map[string]map[string]int64
+	touched     *touchRecord
 }
 
-func (f fakeDeps) ListWorktrees(context.Context) ([]worktree.Worktree, error) {
+type touchRecord struct {
+	repoKey string
+	path    string
+}
+
+func (f fakeDeps) ListWorktrees(context.Context) (string, []worktree.Worktree, error) {
 	if f.err != nil {
-		return nil, f.err
+		return "", nil, f.err
 	}
-	return append([]worktree.Worktree(nil), f.worktrees...), nil
+	return f.repoKey, append([]worktree.Worktree(nil), f.worktrees...), nil
 }
 
 func (f fakeDeps) SelectWorktreeWithFzf(context.Context, []worktree.Worktree) (worktree.Worktree, error) {
@@ -357,4 +423,26 @@ func (f fakeDeps) CreateWorktree(context.Context, string) (string, error) {
 		return f.createPath, nil
 	}
 	return "", nil
+}
+
+func (f fakeDeps) LoadWorktreeState(_ context.Context, repoKey string) (map[string]int64, error) {
+	if f.state == nil {
+		return map[string]int64{}, nil
+	}
+	if got, ok := f.state[repoKey]; ok {
+		out := make(map[string]int64, len(got))
+		for k, v := range got {
+			out[k] = v
+		}
+		return out, nil
+	}
+	return map[string]int64{}, nil
+}
+
+func (f fakeDeps) TouchWorktreeState(_ context.Context, repoKey, path string) error {
+	if f.touched != nil {
+		f.touched.repoKey = repoKey
+		f.touched.path = path
+	}
+	return nil
 }

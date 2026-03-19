@@ -6,5 +6,6 @@ type Worktree struct {
 	BranchLabel string
 	IsDetached  bool
 	IsCurrent   bool
+	LastUsedAt  int64
 	Index       int
 }

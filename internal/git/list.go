@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"wt/internal/worktree"
@@ -28,33 +29,59 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
-func ListWorktrees(ctx context.Context, runner Runner) ([]worktree.Worktree, error) {
+func ListWorktrees(ctx context.Context, runner Runner) (string, []worktree.Worktree, error) {
 	rootOut, rootErr, err := runner.Run(ctx, "git", "rev-parse", "--show-toplevel")
 	if err != nil {
 		if isNotGitRepository(err, rootOut, rootErr) {
-			return nil, ErrNotGitRepository
+			return "", nil, ErrNotGitRepository
 		}
-		return nil, fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+		return "", nil, fmt.Errorf("git rev-parse --show-toplevel: %w", err)
 	}
 
 	currentPath := strings.TrimSpace(string(rootOut))
+	commonDirOut, commonDirErr, err := runner.Run(ctx, "git", "-C", currentPath, "rev-parse", "--git-common-dir")
+	if err != nil {
+		if isNotGitRepository(err, commonDirOut, commonDirErr) {
+			return "", nil, ErrNotGitRepository
+		}
+		return "", nil, fmt.Errorf("git rev-parse --git-common-dir: %w", err)
+	}
+
 	worktreeOut, worktreeErr, err := runner.Run(ctx, "git", "-C", currentPath, "worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		if isNotGitRepository(err, worktreeOut, worktreeErr) {
-			return nil, ErrNotGitRepository
+			return "", nil, ErrNotGitRepository
 		}
-		return nil, fmt.Errorf("git worktree list: %w", err)
+		return "", nil, fmt.Errorf("git worktree list: %w", err)
 	}
 
 	items, err := worktree.ParsePorcelainZ(string(worktreeOut))
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 
-	return worktree.Normalize(items, currentPath), nil
+	for i := range items {
+		items[i].IsCurrent = filepath.Clean(items[i].Path) == filepath.Clean(currentPath)
+	}
+
+	return cleanPath(currentPath, commonDirOut), items, nil
 }
 
 func isNotGitRepository(err error, stdout []byte, stderr []byte) bool {
 	combined := strings.ToLower(string(stdout) + " " + string(stderr) + " " + err.Error())
 	return strings.Contains(combined, "not a git repository")
+}
+
+func cleanPath(base string, raw []byte) string {
+	return cleanPathString(base, strings.TrimSpace(string(raw)))
+}
+
+func cleanPathString(base, raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if filepath.IsAbs(raw) {
+		return filepath.Clean(raw)
+	}
+	return filepath.Clean(filepath.Join(base, raw))
 }

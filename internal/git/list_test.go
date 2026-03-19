@@ -8,12 +8,13 @@ import (
 	"testing"
 )
 
-func TestListWorktreesParsesAndNormalizes(t *testing.T) {
+func TestListWorktreesReturnsRepoKeyAndRawItems(t *testing.T) {
 	runner := fakeRunner{
 		outputs: map[string]string{
-			key("git", "rev-parse", "--show-toplevel"): "/repo\n",
-			key("git", "-C", "/repo", "worktree", "list", "--porcelain", "-z"): strings.Join([]string{
-				"worktree /repo",
+			key("git", "rev-parse", "--show-toplevel"):                                   "/repo/worktrees/current\n",
+			key("git", "-C", "/repo/worktrees/current", "rev-parse", "--git-common-dir"): "/repo/.git\n",
+			key("git", "-C", "/repo/worktrees/current", "worktree", "list", "--porcelain", "-z"): strings.Join([]string{
+				"worktree /repo/worktrees/current",
 				"HEAD 1111111",
 				"branch refs/heads/main",
 				"",
@@ -25,18 +26,21 @@ func TestListWorktreesParsesAndNormalizes(t *testing.T) {
 		},
 	}
 
-	got, err := ListWorktrees(context.Background(), runner)
+	repoKey, got, err := ListWorktrees(context.Background(), runner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if repoKey != "/repo/.git" {
+		t.Fatalf("expected repo key /repo/.git, got %q", repoKey)
 	}
 	if len(got) != 2 {
 		t.Fatalf("expected 2 worktrees, got %d", len(got))
 	}
-	if !got[0].IsCurrent || got[0].Index != 1 {
-		t.Fatalf("expected current worktree first, got %#v", got[0])
+	if !got[0].IsCurrent {
+		t.Fatalf("expected current worktree marked current, got %#v", got[0])
 	}
-	if got[1].Path != "/repo/.worktrees/feat-a" || got[1].Index != 2 {
-		t.Fatalf("expected normalized numbering, got %#v", got[1])
+	if got[1].Path != "/repo/.worktrees/feat-a" {
+		t.Fatalf("expected raw worktree order preserved, got %#v", got[1])
 	}
 }
 
@@ -50,7 +54,7 @@ func TestListWorktreesMapsNonRepoError(t *testing.T) {
 		},
 	}
 
-	_, err := ListWorktrees(context.Background(), runner)
+	_, _, err := ListWorktrees(context.Background(), runner)
 	if !errors.Is(err, ErrNotGitRepository) {
 		t.Fatalf("expected ErrNotGitRepository, got %v", err)
 	}
@@ -59,28 +63,33 @@ func TestListWorktreesMapsNonRepoError(t *testing.T) {
 func TestListWorktreesIgnoresStderrOnSuccess(t *testing.T) {
 	runner := fakeRunner{
 		outputs: map[string]string{
-			key("git", "rev-parse", "--show-toplevel"): "/repo\n",
-			key("git", "-C", "/repo", "worktree", "list", "--porcelain", "-z"): strings.Join([]string{
-				"worktree /repo",
+			key("git", "rev-parse", "--show-toplevel"):                                   "/repo/worktrees/current\n",
+			key("git", "-C", "/repo/worktrees/current", "rev-parse", "--git-common-dir"): "/repo/.git\n",
+			key("git", "-C", "/repo/worktrees/current", "worktree", "list", "--porcelain", "-z"): strings.Join([]string{
+				"worktree /repo/worktrees/current",
 				"HEAD 1111111",
 				"branch refs/heads/main",
 				"",
 			}, "\x00"),
 		},
 		stderr: map[string]string{
-			key("git", "rev-parse", "--show-toplevel"):                         "hint: noisy but harmless\n",
-			key("git", "-C", "/repo", "worktree", "list", "--porcelain", "-z"): "hint: noisy but harmless\n",
+			key("git", "rev-parse", "--show-toplevel"):                                           "hint: noisy but harmless\n",
+			key("git", "-C", "/repo/worktrees/current", "rev-parse", "--git-common-dir"):         "hint: noisy but harmless\n",
+			key("git", "-C", "/repo/worktrees/current", "worktree", "list", "--porcelain", "-z"): "hint: noisy but harmless\n",
 		},
 	}
 
-	got, err := ListWorktrees(context.Background(), runner)
+	repoKey, got, err := ListWorktrees(context.Background(), runner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if repoKey != "/repo/.git" {
+		t.Fatalf("expected repo key /repo/.git, got %q", repoKey)
 	}
 	if len(got) != 1 {
 		t.Fatalf("expected 1 worktree, got %d", len(got))
 	}
-	if got[0].Path != "/repo" {
+	if got[0].Path != "/repo/worktrees/current" {
 		t.Fatalf("expected parsed stdout only, got %#v", got[0])
 	}
 }

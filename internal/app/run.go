@@ -7,35 +7,68 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 
 	"wt/internal/git"
+	"wt/internal/state"
 	"wt/internal/ui"
 	"wt/internal/worktree"
 )
 
 type Deps interface {
-	ListWorktrees(ctx context.Context) ([]worktree.Worktree, error)
+	ListWorktrees(ctx context.Context) (string, []worktree.Worktree, error)
 	SelectWorktreeWithFzf(ctx context.Context, items []worktree.Worktree) (worktree.Worktree, error)
 	CreateWorktree(ctx context.Context, name string) (string, error)
+	LoadWorktreeState(ctx context.Context, repoKey string) (map[string]int64, error)
+	TouchWorktreeState(ctx context.Context, repoKey, path string) error
 }
 
 type RealDeps struct{}
 
-func (RealDeps) ListWorktrees(ctx context.Context) ([]worktree.Worktree, error) {
+var defaultStateStore struct {
+	once  sync.Once
+	store *state.Store
+	err   error
+}
+
+func ensureStore() (*state.Store, error) {
+	defaultStateStore.once.Do(func() {
+		defaultStateStore.store, defaultStateStore.err = state.NewStore()
+	})
+	return defaultStateStore.store, defaultStateStore.err
+}
+
+func (d RealDeps) ListWorktrees(ctx context.Context) (string, []worktree.Worktree, error) {
 	return git.ListWorktrees(ctx, git.ExecRunner{})
 }
 
-func (RealDeps) SelectWorktreeWithFzf(ctx context.Context, items []worktree.Worktree) (worktree.Worktree, error) {
+func (d RealDeps) SelectWorktreeWithFzf(ctx context.Context, items []worktree.Worktree) (worktree.Worktree, error) {
 	return ui.SelectWorktreeWithFzf(ctx, items, ui.ExecRunner{})
 }
 
-func (RealDeps) CreateWorktree(ctx context.Context, name string) (string, error) {
+func (d RealDeps) CreateWorktree(ctx context.Context, name string) (string, error) {
 	return git.CreateWorktree(ctx, git.ExecRunner{}, name)
+}
+
+func (d RealDeps) LoadWorktreeState(_ context.Context, repoKey string) (map[string]int64, error) {
+	store, err := ensureStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Load(repoKey)
+}
+
+func (d RealDeps) TouchWorktreeState(_ context.Context, repoKey, path string) error {
+	store, err := ensureStore()
+	if err != nil {
+		return err
+	}
+	return store.Touch(repoKey, path)
 }
 
 func Run(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut io.Writer, deps Deps) int {
 	if deps == nil {
-		deps = RealDeps{}
+		deps = &RealDeps{}
 	}
 
 	if len(args) == 0 {
@@ -64,18 +97,9 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 			return 2
 		}
 
-		items, err := deps.ListWorktrees(ctx)
+		repoKey, items, err := orderedWorktrees(ctx, deps)
 		if err != nil {
-			if errors.Is(err, git.ErrNotGitRepository) {
-				fmt.Fprintln(errOut, "not a git repository")
-				return 3
-			}
-			fmt.Fprintln(errOut, err)
-			return 1
-		}
-		if len(items) == 0 {
-			fmt.Fprintln(errOut, "no worktrees available")
-			return 1
+			return writeWorktreeError(errOut, err)
 		}
 
 		selected, err := deps.SelectWorktreeWithFzf(ctx, items)
@@ -92,23 +116,19 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 			}
 		}
 
+		if err := deps.TouchWorktreeState(ctx, repoKey, selected.Path); err != nil {
+			fmt.Fprintln(errOut, err)
+			return 1
+		}
+
 		fmt.Fprintln(out, selected.Path)
 		return 0
 	}
 
 	if len(args) == 0 {
-		items, err := deps.ListWorktrees(ctx)
+		repoKey, items, err := orderedWorktrees(ctx, deps)
 		if err != nil {
-			if errors.Is(err, git.ErrNotGitRepository) {
-				fmt.Fprintln(errOut, "not a git repository")
-				return 3
-			}
-			fmt.Fprintln(errOut, err)
-			return 1
-		}
-		if len(items) == 0 {
-			fmt.Fprintln(errOut, "no worktrees available")
-			return 1
+			return writeWorktreeError(errOut, err)
 		}
 
 		ui.RenderMenu(errOut, items)
@@ -120,14 +140,17 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 			fmt.Fprintln(errOut, err)
 			return 1
 		}
-		for i := range items {
-			if items[i].Index == index {
-				fmt.Fprintln(out, items[i].Path)
-				return 0
-			}
+		selected, ok := selectByIndex(items, index)
+		if !ok {
+			fmt.Fprintf(errOut, "worktree index %d out of range\n", index)
+			return 2
 		}
-		fmt.Fprintf(errOut, "worktree index %d out of range\n", index)
-		return 2
+		if err := deps.TouchWorktreeState(ctx, repoKey, selected.Path); err != nil {
+			fmt.Fprintln(errOut, err)
+			return 1
+		}
+		fmt.Fprintln(out, selected.Path)
+		return 0
 	}
 
 	if len(args) > 1 {
@@ -141,26 +164,18 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 		return 2
 	}
 
-	items, err := deps.ListWorktrees(ctx)
+	repoKey, items, err := orderedWorktrees(ctx, deps)
 	if err != nil {
-		if errors.Is(err, git.ErrNotGitRepository) {
-			fmt.Fprintln(errOut, "not a git repository")
-			return 3
-		}
-		fmt.Fprintln(errOut, err)
-		return 1
+		return writeWorktreeError(errOut, err)
 	}
-
-	var selected *worktree.Worktree
-	for i := range items {
-		if items[i].Index == index {
-			selected = &items[i]
-			break
-		}
-	}
-	if selected == nil {
+	selected, ok := selectByIndex(items, index)
+	if !ok {
 		fmt.Fprintf(errOut, "worktree index %d out of range\n", index)
 		return 2
+	}
+	if err := deps.TouchWorktreeState(ctx, repoKey, selected.Path); err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
 	}
 
 	fmt.Fprintln(out, selected.Path)
@@ -168,14 +183,9 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 }
 
 func runList(ctx context.Context, out io.Writer, errOut io.Writer, deps Deps) int {
-	items, err := deps.ListWorktrees(ctx)
+	_, items, err := orderedWorktrees(ctx, deps)
 	if err != nil {
-		if errors.Is(err, git.ErrNotGitRepository) {
-			fmt.Fprintln(errOut, "not a git repository")
-			return 3
-		}
-		fmt.Fprintln(errOut, err)
-		return 1
+		return writeWorktreeError(errOut, err)
 	}
 	if len(items) == 0 {
 		fmt.Fprintln(errOut, "no worktrees available")
@@ -204,16 +214,53 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 
 	path, err := deps.CreateWorktree(ctx, args[0])
 	if err != nil {
-		if errors.Is(err, git.ErrNotGitRepository) {
-			fmt.Fprintln(errOut, "not a git repository")
-			return 3
-		}
+		return writeWorktreeError(errOut, err)
+	}
+
+	repoKey, _, err := deps.ListWorktrees(ctx)
+	if err != nil {
+		return writeWorktreeError(errOut, err)
+	}
+	if err := deps.TouchWorktreeState(ctx, repoKey, path); err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
 
 	fmt.Fprintln(out, path)
 	return 0
+}
+
+func orderedWorktrees(ctx context.Context, deps Deps) (string, []worktree.Worktree, error) {
+	repoKey, items, err := deps.ListWorktrees(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	mru, err := deps.LoadWorktreeState(ctx, repoKey)
+	if err != nil {
+		return "", nil, err
+	}
+	for i := range items {
+		items[i].LastUsedAt = mru[items[i].Path]
+	}
+	return repoKey, worktree.Normalize(items), nil
+}
+
+func selectByIndex(items []worktree.Worktree, index int) (worktree.Worktree, bool) {
+	for i := range items {
+		if items[i].Index == index {
+			return items[i], true
+		}
+	}
+	return worktree.Worktree{}, false
+}
+
+func writeWorktreeError(errOut io.Writer, err error) int {
+	if errors.Is(err, git.ErrNotGitRepository) {
+		fmt.Fprintln(errOut, "not a git repository")
+		return 3
+	}
+	fmt.Fprintln(errOut, err)
+	return 1
 }
 
 func printHelperHelp(out io.Writer) {
