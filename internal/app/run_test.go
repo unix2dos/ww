@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"wt/internal/git"
+	"wt/internal/ui"
 	"wt/internal/worktree"
 )
 
@@ -122,6 +123,88 @@ func TestRunRejectsOutOfRangeIndex(t *testing.T) {
 	}
 }
 
+func TestRunFzfModePrintsSelectedPath(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		worktrees: []worktree.Worktree{
+			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		},
+		fzfSelected: worktree.Worktree{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+	}
+
+	code := Run(context.Background(), []string{"--fzf"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stdout.String() != "/repo/.worktrees/alpha\n" {
+		t.Fatalf("expected selected path on stdout, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunFzfModeReturnsExit3WhenFzfMissing(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		worktrees: []worktree.Worktree{
+			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
+		},
+		fzfErr: ui.ErrFzfNotInstalled,
+	}
+
+	code := Run(context.Background(), []string{"--fzf"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 3 {
+		t.Fatalf("expected exit code 3, got %d", code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("fzf is not installed")) {
+		t.Fatalf("expected missing fzf message, got %q", stderr.String())
+	}
+}
+
+func TestRunFzfModeReturns130WhenCanceled(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		worktrees: []worktree.Worktree{
+			{Index: 1, Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Index: 2, Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		},
+		fzfErr: ui.ErrSelectionCanceled,
+	}
+
+	code := Run(context.Background(), []string{"--fzf"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 130 {
+		t.Fatalf("expected exit code 130, got %d", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout output, got %q", stdout.String())
+	}
+}
+
+func TestRunRejectsExtraArgsAfterFzf(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"--fzf", "junk"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("unexpected extra arguments")) {
+		t.Fatalf("expected extra-args message, got %q", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout output, got %q", stdout.String())
+	}
+}
+
 func TestRunInteractiveSelectionWritesMenuToStderrAndPathToStdout(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -169,8 +252,10 @@ func TestRunInteractiveSelectionReturnsNonZeroOnEOFWithoutSelection(t *testing.T
 }
 
 type fakeDeps struct {
-	worktrees []worktree.Worktree
-	err       error
+	worktrees   []worktree.Worktree
+	err         error
+	fzfSelected worktree.Worktree
+	fzfErr      error
 }
 
 func (f fakeDeps) ListWorktrees(context.Context) ([]worktree.Worktree, error) {
@@ -178,4 +263,17 @@ func (f fakeDeps) ListWorktrees(context.Context) ([]worktree.Worktree, error) {
 		return nil, f.err
 	}
 	return append([]worktree.Worktree(nil), f.worktrees...), nil
+}
+
+func (f fakeDeps) SelectWorktreeWithFzf(context.Context, []worktree.Worktree) (worktree.Worktree, error) {
+	if f.fzfErr != nil {
+		return worktree.Worktree{}, f.fzfErr
+	}
+	if f.fzfSelected.Path != "" || f.fzfSelected.Index != 0 {
+		return f.fzfSelected, nil
+	}
+	if len(f.worktrees) > 0 {
+		return f.worktrees[0], nil
+	}
+	return worktree.Worktree{}, nil
 }
