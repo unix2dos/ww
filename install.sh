@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
+OLD_RC_MARKER_BEGIN="# wt shell wrapper begin"
+OLD_RC_MARKER_END="# wt shell wrapper end"
 RC_MARKER_BEGIN="# ww shell wrapper begin"
 RC_MARKER_END="# ww shell wrapper end"
 INSTALL_SHELL=""
@@ -21,12 +23,14 @@ EOF
 
 strip_managed_block() {
   local rc_file="$1"
+  local begin="$2"
+  local end="$3"
   local tmp
 
   [ -f "$rc_file" ] || return 0
 
   tmp="$(mktemp)"
-  awk -v begin="$RC_MARKER_BEGIN" -v end="$RC_MARKER_END" '
+  awk -v begin="$begin" -v end="$end" '
     $0 == begin { skip = 1; next }
     $0 == end { skip = 0; next }
     skip != 1 { print }
@@ -111,18 +115,36 @@ choose_rc_file() {
 
 append_shell_wrapper() {
   local rc_file="$1"
+  local ww_bin="$2"
 
   mkdir -p "$(dirname "$rc_file")"
   touch "$rc_file"
-  strip_managed_block "$rc_file"
+  strip_managed_block "$rc_file" "$OLD_RC_MARKER_BEGIN" "$OLD_RC_MARKER_END"
+  strip_managed_block "$rc_file" "$RC_MARKER_BEGIN" "$RC_MARKER_END"
 
   {
     printf '%s\n' "$RC_MARKER_BEGIN"
     printf '%s\n' "ww() {"
+    printf '%s\n' "  local ww_bin=\"$ww_bin\""
     printf '%s\n' "  local target"
-    printf '%s\n' "  target=\"\$(command ww \"\$@\")\" || return \$?"
-    printf '%s\n' "  [ -n \"\$target\" ] || return 1"
-    printf '%s\n' "  cd \"\$target\" || return \$?"
+    printf '%s\n' "  target=\"\$(\"\$ww_bin\" \"\$@\")\""
+    printf '%s\n' "  local status=\$?"
+    printf '%s\n' "  if [ \$status -ne 0 ]; then"
+    printf '%s\n' "    [ -n \"\$target\" ] && printf '%s\\n' \"\$target\""
+    printf '%s\n' "    return \$status"
+    printf '%s\n' "  fi"
+    printf '%s\n' "  case \"\$target\" in"
+    printf '%s\n' "    *\$'\\n'*)"
+    printf '%s\n' "      [ -n \"\$target\" ] && printf '%s\\n' \"\$target\""
+    printf '%s\n' "      return 0"
+    printf '%s\n' "      ;;"
+    printf '%s\n' "  esac"
+    printf '%s\n' "  if [ -n \"\$target\" ] && [ -d \"\$target\" ]; then"
+    printf '%s\n' "    cd \"\$target\" || return \$?"
+    printf '%s\n' "    return 0"
+    printf '%s\n' "  fi"
+    printf '%s\n' "  [ -n \"\$target\" ] && printf '%s\\n' \"\$target\""
+    printf '%s\n' "  return 0"
     printf '%s\n' "}"
     printf '%s\n' "$RC_MARKER_END"
   } >>"$rc_file"
@@ -135,18 +157,18 @@ install_binary() {
   if [ -x "$REPO_ROOT/bin/ww" ]; then
     cp "$REPO_ROOT/bin/ww" "$bin_path"
     chmod +x "$bin_path"
-    return
+  else
+    cd "$REPO_ROOT"
+    go build -o "$bin_path" ./cmd/wt
   fi
-
-  cd "$REPO_ROOT"
-  go build -o "$bin_path" ./cmd/wt
+  rm -f "$BIN_DIR/wt"
 }
 
 parse_args "$@"
 install_binary
 
 RC_TARGET="$(choose_rc_file)"
-append_shell_wrapper "$RC_TARGET"
+append_shell_wrapper "$RC_TARGET" "$BIN_DIR/ww"
 
 printf 'Installed helper binary to %s\n' "$BIN_DIR/ww"
 printf 'Installed ww shell function via %s\n' "$RC_TARGET"

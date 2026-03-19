@@ -49,8 +49,8 @@ func TestInstallReleaseScriptInstallsFromTarballURL(t *testing.T) {
 	if !strings.Contains(string(data), "ww()") {
 		t.Fatalf("expected ww shell function, got %q", string(data))
 	}
-	if !strings.Contains(string(data), "command ww") {
-		t.Fatalf("expected ww shell function to call command ww, got %q", string(data))
+	if !strings.Contains(string(data), filepath.Join(binDir, "ww")) {
+		t.Fatalf("expected ww shell function to call installed binary, got %q", string(data))
 	}
 	if !strings.Contains(string(data), "ww shell wrapper begin") {
 		t.Fatalf("expected managed block marker, got %q", string(data))

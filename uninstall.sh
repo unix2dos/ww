@@ -3,6 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OLD_RC_MARKER_BEGIN="# wt shell wrapper begin"
+OLD_RC_MARKER_END="# wt shell wrapper end"
 RC_MARKER_BEGIN="# ww shell wrapper begin"
 RC_MARKER_END="# ww shell wrapper end"
 INSTALL_SHELL=""
@@ -95,12 +97,14 @@ choose_rc_file() {
 
 strip_managed_block() {
   local rc_file="$1"
+  local begin="$2"
+  local end="$3"
   local tmp
 
   [ -f "$rc_file" ] || return 0
 
   tmp="$(mktemp)"
-  awk -v begin="$RC_MARKER_BEGIN" -v end="$RC_MARKER_END" '
+  awk -v begin="$begin" -v end="$end" '
     $0 == begin { skip = 1; next }
     $0 == end { skip = 0; next }
     skip != 1 { print }
@@ -110,9 +114,10 @@ strip_managed_block() {
 
 parse_args "$@"
 
-rm -f "$BIN_DIR/ww"
+rm -f "$BIN_DIR/ww" "$BIN_DIR/wt"
 RC_TARGET="$(choose_rc_file)"
-strip_managed_block "$RC_TARGET"
+strip_managed_block "$RC_TARGET" "$OLD_RC_MARKER_BEGIN" "$OLD_RC_MARKER_END"
+strip_managed_block "$RC_TARGET" "$RC_MARKER_BEGIN" "$RC_MARKER_END"
 
-printf 'Removed helper binary from %s\n' "$BIN_DIR/ww"
+printf 'Removed helper binary from %s and %s\n' "$BIN_DIR/ww" "$BIN_DIR/wt"
 printf 'Cleaned shell rc: %s\n' "$RC_TARGET"
