@@ -1,3 +1,4 @@
 dist/
 .worktrees/
 .tools/
+**.DS_Store

@@ -31,6 +31,9 @@ func TestPagesDemoContract(t *testing.T) {
 	if !strings.Contains(indexHTML, "ww Demo") {
 		t.Fatalf("expected Pages demo to show a visible title")
 	}
+	if !strings.Contains(indexHTML, "speed: 0.5") {
+		t.Fatalf("expected Pages demo to default to 0.5x playback")
+	}
 
 	pagesWorkflow := mustReadFile(t, filepath.Join(root, ".github", "workflows", "pages.yml"))
 	for _, snippet := range []string{
