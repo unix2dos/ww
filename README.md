@@ -4,10 +4,35 @@
 
 ## Install
 
+### One-Line Install
+
+Install the latest release for your current platform:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unix2dos/wt/main/scripts/install-release.sh | bash
+source ~/.zshrc
+```
+
+For Bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unix2dos/wt/main/scripts/install-release.sh | bash -s -- --shell bash --rc-file ~/.bashrc
+source ~/.bashrc
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unix2dos/wt/main/scripts/install-release.sh | WT_VERSION=vX.Y.Z bash
+```
+
+This path does not require Go. It downloads the matching release archive from GitHub and runs the bundled installer.
+
 ### Install From Source
 
 ```bash
-cd /Users/liuwei/workspace/wt
+git clone https://github.com/unix2dos/wt.git
+cd wt
 bash install.sh
 source ~/.zshrc
 ```
@@ -21,8 +46,8 @@ Source installs require a working Go toolchain.
 ### Install From A Release Bundle
 
 ```bash
-tar -xzf wt-v0.1.0-darwin-arm64.tar.gz
-cd wt-v0.1.0-darwin-arm64
+tar -xzf wt-vX.Y.Z-darwin-arm64.tar.gz
+cd wt-vX.Y.Z-darwin-arm64
 bash install.sh
 source ~/.zshrc
 ```
@@ -48,7 +73,7 @@ If you installed into Bash, reload `~/.bashrc` instead.
 
 ## Usage
 
-`wt` 只处理“当前仓库”的 worktree。你需要在某个 Git 仓库或它的 worktree 目录里运行它。
+`wt` only works for the current repository. Run it inside a Git repository or one of that repository's worktrees.
 
 ### Interactive Pick
 
@@ -135,15 +160,15 @@ bash install.sh
 Build release archives locally:
 
 ```bash
-bash scripts/release.sh v0.1.0
+bash scripts/release.sh vX.Y.Z
 ```
 
 Artifacts are written to `dist/`:
 
-- `wt-v0.1.0-darwin-arm64.tar.gz`
-- `wt-v0.1.0-darwin-amd64.tar.gz`
-- `wt-v0.1.0-linux-arm64.tar.gz`
-- `wt-v0.1.0-linux-amd64.tar.gz`
+- `wt-vX.Y.Z-darwin-arm64.tar.gz`
+- `wt-vX.Y.Z-darwin-amd64.tar.gz`
+- `wt-vX.Y.Z-linux-arm64.tar.gz`
+- `wt-vX.Y.Z-linux-amd64.tar.gz`
 - `checksums.txt`
 
 GitHub release publishing is wired through `.github/workflows/release.yml` and runs on tags matching `v*`.
