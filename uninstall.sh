@@ -110,9 +110,9 @@ strip_managed_block() {
 
 parse_args "$@"
 
-rm -f "$BIN_DIR/wt"
+rm -f "$BIN_DIR/ww"
 RC_TARGET="$(choose_rc_file)"
 strip_managed_block "$RC_TARGET"
 
-printf 'Removed helper binary from %s\n' "$BIN_DIR/wt"
+printf 'Removed helper binary from %s\n' "$BIN_DIR/ww"
 printf 'Cleaned shell rc: %s\n' "$RC_TARGET"

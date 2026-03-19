@@ -4,7 +4,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
-WRAPPER_SOURCE_PATH="$REPO_ROOT/shell/cwt.sh"
 RC_MARKER_BEGIN="# ww shell wrapper begin"
 RC_MARKER_END="# ww shell wrapper end"
 INSTALL_SHELL=""
@@ -119,12 +118,9 @@ append_shell_wrapper() {
 
   {
     printf '%s\n' "$RC_MARKER_BEGIN"
-    printf '%s\n' "if [ -f \"$WRAPPER_SOURCE_PATH\" ]; then"
-    printf '%s\n' "  source \"$WRAPPER_SOURCE_PATH\""
-    printf '%s\n' "fi"
     printf '%s\n' "ww() {"
     printf '%s\n' "  local target"
-    printf '%s\n' "  target=\"\$(cwt \"\$@\")\" || return \$?"
+    printf '%s\n' "  target=\"\$(command ww \"\$@\")\" || return \$?"
     printf '%s\n' "  [ -n \"\$target\" ] || return 1"
     printf '%s\n' "  cd \"\$target\" || return \$?"
     printf '%s\n' "}"
@@ -133,11 +129,11 @@ append_shell_wrapper() {
 }
 
 install_binary() {
-  local bin_path="$BIN_DIR/wt"
+  local bin_path="$BIN_DIR/ww"
 
   mkdir -p "$BIN_DIR"
-  if [ -x "$REPO_ROOT/bin/wt" ]; then
-    cp "$REPO_ROOT/bin/wt" "$bin_path"
+  if [ -x "$REPO_ROOT/bin/ww" ]; then
+    cp "$REPO_ROOT/bin/ww" "$bin_path"
     chmod +x "$bin_path"
     return
   fi
@@ -146,18 +142,13 @@ install_binary() {
   go build -o "$bin_path" ./cmd/wt
 }
 
-install_wrapper() {
-  return 0
-}
-
 parse_args "$@"
 install_binary
-install_wrapper
 
 RC_TARGET="$(choose_rc_file)"
 append_shell_wrapper "$RC_TARGET"
 
-printf 'Installed helper binary to %s\n' "$BIN_DIR/wt"
+printf 'Installed helper binary to %s\n' "$BIN_DIR/ww"
 printf 'Installed ww shell function via %s\n' "$RC_TARGET"
 printf 'Updated shell rc: %s\n' "$RC_TARGET"
 printf '\n'

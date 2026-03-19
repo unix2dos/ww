@@ -42,7 +42,7 @@ func TestReleaseScriptBuildsExpectedArchives(t *testing.T) {
 			"install.sh",
 			"uninstall.sh",
 			"shell/cwt.sh",
-			"bin/wt",
+			"bin/ww",
 		} {
 			if !strings.Contains(contents, required) {
 				t.Fatalf("expected %s in %s, got:\n%s", required, archive, contents)

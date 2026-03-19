@@ -52,7 +52,7 @@ bash install.sh
 source ~/.zshrc
 ```
 
-Release bundle installs copy the prebuilt `bin/wt` binary and do not require Go.
+Release bundle installs copy the prebuilt `bin/ww` binary and do not require Go.
 
 ### Installer Options
 

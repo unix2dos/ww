@@ -38,8 +38,8 @@ func TestInstallReleaseScriptInstallsFromTarballURL(t *testing.T) {
 		"WT_TARBALL_URL=file://"+tarball,
 	), "bash", "scripts/install-release.sh", "--shell", "bash", "--rc-file", rcPath, "--bin-dir", binDir)
 
-	if _, err := os.Stat(filepath.Join(binDir, "wt")); err != nil {
-		t.Fatalf("expected installed wt binary: %v", err)
+	if _, err := os.Stat(filepath.Join(binDir, "ww")); err != nil {
+		t.Fatalf("expected installed ww binary: %v", err)
 	}
 
 	data, err := os.ReadFile(rcPath)
@@ -48,6 +48,9 @@ func TestInstallReleaseScriptInstallsFromTarballURL(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "ww()") {
 		t.Fatalf("expected ww shell function, got %q", string(data))
+	}
+	if !strings.Contains(string(data), "command ww") {
+		t.Fatalf("expected ww shell function to call command ww, got %q", string(data))
 	}
 	if !strings.Contains(string(data), "ww shell wrapper begin") {
 		t.Fatalf("expected managed block marker, got %q", string(data))

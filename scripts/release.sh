@@ -33,7 +33,7 @@ for target in $TARGETS; do
   STAGE_DIR="$STAGE_ROOT/$ARTIFACT_DIR"
 
   mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/shell"
-  CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$STAGE_DIR/bin/wt" ./cmd/wt
+  CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$STAGE_DIR/bin/ww" ./cmd/wt
   cp README.md install.sh uninstall.sh "$STAGE_DIR/"
   cp shell/cwt.sh "$STAGE_DIR/shell/cwt.sh"
 
