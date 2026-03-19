@@ -22,13 +22,16 @@ func ParsePorcelainZ(raw string) ([]Worktree, error) {
 
 		key, value, ok := strings.Cut(token, " ")
 		if !ok {
-			if token == "detached" {
+			switch token {
+			case "detached":
 				if current == nil {
 					return nil, errors.New("detached token before worktree")
 				}
 				current.IsDetached = true
 				current.BranchLabel = "(detached)"
 				current.BranchRef = ""
+				continue
+			case "bare":
 				continue
 			}
 			return nil, fmt.Errorf("malformed token: %q", token)
@@ -47,6 +50,7 @@ func ParsePorcelainZ(raw string) ([]Worktree, error) {
 			current.BranchRef = value
 			current.BranchLabel = branchLabel(value)
 		case "HEAD":
+		case "locked", "prunable", "bare":
 		default:
 			return nil, fmt.Errorf("unsupported token: %q", key)
 		}
