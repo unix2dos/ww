@@ -11,6 +11,9 @@ func TestPagesDemoContract(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 
 	readme := mustReadFile(t, filepath.Join(root, "README.md"))
+	if !strings.Contains(readme, "One command to switch, create, and clean up worktrees.") {
+		t.Fatalf("expected README landing-page value proposition")
+	}
 	if !strings.Contains(readme, "## Demo") {
 		t.Fatalf("expected README demo section")
 	}
@@ -19,6 +22,24 @@ func TestPagesDemoContract(t *testing.T) {
 	}
 	if !strings.Contains(readme, "docs/assets/ww-demo.svg") {
 		t.Fatalf("expected README to embed the generated SVG demo preview")
+	}
+	if !strings.Contains(readme, "docs/reference.md") {
+		t.Fatalf("expected README to hand off detailed docs to docs/reference.md")
+	}
+	if strings.Contains(readme, "### Install From Source") {
+		t.Fatalf("expected README to stay in landing-page mode, not inline the full reference")
+	}
+
+	reference := mustReadFile(t, filepath.Join(root, "docs", "reference.md"))
+	for _, snippet := range []string{
+		"# ww Reference",
+		"## Install",
+		"## Usage",
+		"## Release",
+	} {
+		if !strings.Contains(reference, snippet) {
+			t.Fatalf("expected reference doc to contain %q", snippet)
+		}
 	}
 
 	indexHTML := mustReadFile(t, filepath.Join(root, "docs", "index.html"))
@@ -31,8 +52,11 @@ func TestPagesDemoContract(t *testing.T) {
 	if !strings.Contains(indexHTML, "ww Demo") {
 		t.Fatalf("expected Pages demo to show a visible title")
 	}
-	if !strings.Contains(indexHTML, "speed: 0.5") {
-		t.Fatalf("expected Pages demo to default to 0.5x playback")
+	if !strings.Contains(indexHTML, "`switch`, `ww new`, and safe `ww rm`") {
+		t.Fatalf("expected Pages demo copy to match the refreshed flow")
+	}
+	if !strings.Contains(indexHTML, "speed: 0.6") {
+		t.Fatalf("expected Pages demo to default to slower playback")
 	}
 
 	pagesWorkflow := mustReadFile(t, filepath.Join(root, ".github", "workflows", "pages.yml"))
@@ -54,18 +78,36 @@ func TestPagesDemoContract(t *testing.T) {
 	if !strings.Contains(generateScript, "asciinema") {
 		t.Fatalf("expected generator script to use asciinema")
 	}
+	if !strings.Contains(generateScript, "scripts/demo-fzf.sh") {
+		t.Fatalf("expected generator script to install the deterministic demo fzf shim")
+	}
+	if !strings.Contains(generateScript, "WW_DEMO_KEYSTROKE_DELAY_MS") {
+		t.Fatalf("expected generator script to expose demo pacing knobs")
+	}
 
 	expectScript := mustReadFile(t, filepath.Join(root, "scripts", "demo-record.exp"))
 	if !strings.Contains(expectScript, "ww new") {
 		t.Fatalf("expected expect demo script to exercise ww new")
 	}
-	if !strings.Contains(expectScript, "Use Up/Down") {
-		t.Fatalf("expected expect demo script to drive the interactive selector")
+	if !strings.Contains(expectScript, "ww rm feat-demo") {
+		t.Fatalf("expected expect demo script to exercise ww rm")
+	}
+	if !strings.Contains(expectScript, "send_text \"feat-a\"") {
+		t.Fatalf("expected expect demo script to drive the fzf query path")
+	}
+	if strings.Contains(expectScript, "Use Up/Down") {
+		t.Fatalf("expected expect demo script to stop driving the built-in selector")
 	}
 
 	cast := mustReadFile(t, filepath.Join(root, "docs", "assets", "ww-demo.cast"))
 	if !strings.Contains(cast, "\"version\":2") {
 		t.Fatalf("expected local asciinema cast asset")
+	}
+	if !strings.Contains(cast, "Select a worktree>") {
+		t.Fatalf("expected demo cast to show the fzf prompt")
+	}
+	if !strings.Contains(cast, "ww rm feat-demo") {
+		t.Fatalf("expected demo cast to cover the removal flow")
 	}
 
 	svg := mustReadFile(t, filepath.Join(root, "docs", "assets", "ww-demo.svg"))

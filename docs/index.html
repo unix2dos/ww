@@ -179,21 +179,21 @@
     <main>
       <section class="hero">
         <div class="intro card">
-          <p class="eyebrow">Shell-First Demo</p>
+          <p class="eyebrow">Fast Path Demo</p>
           <h1>ww Demo</h1>
           <p class="lede">
-            A recorded terminal session showing the built-in interactive selector,
-            path switching, and `ww new` flow inside a throwaway Git repository.
-            This page exists because GitHub README rendering strips playable terminal media.
+            A recorded terminal session showing the `fzf` fast path for `switch`, `ww new`, and safe `ww rm`
+            inside a throwaway Git repository. This page exists because GitHub README rendering strips playable
+            terminal media.
           </p>
         </div>
         <aside class="meta card">
           <h2>What This Covers</h2>
           <ol>
-            <li>Open `ww` and drive the built-in selector with arrow keys.</li>
-            <li>Confirm the shell has switched into an existing worktree.</li>
-            <li>Create a fresh worktree with `ww new feat-demo`.</li>
-            <li>List worktrees again from the newly created branch.</li>
+            <li>Use the `fzf` picker to jump into an existing worktree.</li>
+            <li>Create a fresh worktree with `ww new feat-demo` and enter it immediately.</li>
+            <li>Return to `main` with the same shell-first workflow.</li>
+            <li>Safely remove the temporary worktree with `ww rm feat-demo`.</li>
           </ol>
         </aside>
       </section>
@@ -217,8 +217,8 @@
           preload: true,
           loop: false,
           autoPlay: false,
-          speed: 0.5,
-          idleTimeLimit: 0.8,
+          speed: 0.6,
+          idleTimeLimit: 1.1,
           poster: "npt:1",
           theme: "nord",
           fit: false,

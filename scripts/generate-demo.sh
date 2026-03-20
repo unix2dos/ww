@@ -7,6 +7,7 @@ TOOLS_DIR="$ROOT_DIR/.tools"
 TOOLS_BIN_DIR="$TOOLS_DIR/bin"
 ASSETS_DIR="$ROOT_DIR/docs/assets"
 ASCIINEMA_BIN="$TOOLS_BIN_DIR/asciinema"
+FZF_BIN="$TOOLS_BIN_DIR/fzf"
 HELPER_BIN="$TOOLS_BIN_DIR/ww-helper-demo"
 EXPECT_BIN="/usr/bin/expect"
 CAST_FILE="$ASSETS_DIR/ww-demo.cast"
@@ -22,6 +23,8 @@ fi
 if [[ ! -x "$ASCIINEMA_BIN" ]]; then
   cargo install --locked --root "$TOOLS_DIR" asciinema --version 3.2.0
 fi
+
+install -m 0755 "$ROOT_DIR/scripts/demo-fzf.sh" "$FZF_BIN"
 
 go build -buildvcs=false -o "$HELPER_BIN" ./cmd/ww-helper
 
@@ -53,6 +56,13 @@ export WW_DEMO_SHELL_FILE="$ROOT_DIR/shell/ww.sh"
 export WW_DEMO_HOME="$DEMO_HOME"
 export WW_DEMO_STATE_HOME="$STATE_HOME"
 export WW_DEMO_PATH="$TOOLS_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin"
+export WW_DEMO_KEYSTROKE_DELAY_MS="${WW_DEMO_KEYSTROKE_DELAY_MS:-75}"
+export WW_DEMO_STEP_DELAY_MS="${WW_DEMO_STEP_DELAY_MS:-450}"
+export WW_DEMO_FZF_FOCUS_DELAY_MS="${WW_DEMO_FZF_FOCUS_DELAY_MS:-500}"
+export WW_DEMO_FZF_QUERY_SETTLE_MS="${WW_DEMO_FZF_QUERY_SETTLE_MS:-400}"
+export WW_DEMO_CONFIRM_DELAY_MS="${WW_DEMO_CONFIRM_DELAY_MS:-350}"
+
+IDLE_TIME_LIMIT="${WW_DEMO_IDLE_TIME_LIMIT:-1.1}"
 
 "$ASCIINEMA_BIN" rec \
   --quiet \
@@ -60,7 +70,7 @@ export WW_DEMO_PATH="$TOOLS_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin"
   --headless \
   --return \
   --window-size 110x28 \
-  --idle-time-limit 0.8 \
+  --idle-time-limit "$IDLE_TIME_LIMIT" \
   --output-format asciicast-v2 \
   --command "$EXPECT_BIN -f $ROOT_DIR/scripts/demo-record.exp" \
   "$CAST_FILE"

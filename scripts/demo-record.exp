@@ -10,38 +10,99 @@ proc need_env {name} {
   return $::env($name)
 }
 
+proc env_or_default {name default} {
+  if {![info exists ::env($name)] || $::env($name) eq ""} {
+    return $default
+  }
+  return $::env($name)
+}
+
+proc pause_for {delay_ms} {
+  after $delay_ms
+}
+
+proc await_prompt {} {
+  expect "ww>"
+}
+
+proc send_text {text} {
+  global keystroke_delay_ms
+
+  foreach char [split $text ""] {
+    send -- $char
+    after $keystroke_delay_ms
+  }
+}
+
 set demo_repo [need_env "WW_DEMO_REPO"]
 set helper_bin [need_env "WW_DEMO_HELPER_BIN"]
 set shell_file [need_env "WW_DEMO_SHELL_FILE"]
 set demo_home [need_env "WW_DEMO_HOME"]
 set state_home [need_env "WW_DEMO_STATE_HOME"]
 set demo_path [need_env "WW_DEMO_PATH"]
+set keystroke_delay_ms [env_or_default "WW_DEMO_KEYSTROKE_DELAY_MS" 90]
+set step_delay_ms [env_or_default "WW_DEMO_STEP_DELAY_MS" 650]
+set fzf_focus_delay_ms [env_or_default "WW_DEMO_FZF_FOCUS_DELAY_MS" 850]
+set fzf_query_settle_ms [env_or_default "WW_DEMO_FZF_QUERY_SETTLE_MS" 650]
+set confirm_delay_ms [env_or_default "WW_DEMO_CONFIRM_DELAY_MS" 500]
 
 spawn -noecho env -i HOME=$demo_home XDG_STATE_HOME=$state_home PATH=$demo_path TERM=xterm-256color PS1=ww\> BASH_SILENCE_DEPRECATION_WARNING=1 SHELL=/bin/bash /bin/bash --noprofile --norc -i
 
-expect "ww>"
+await_prompt
 send -- "export WW_HELPER_BIN='$helper_bin'\r"
-expect "ww>"
+
+await_prompt
 send -- "source '$shell_file'\r"
-expect "ww>"
+
+await_prompt
 send -- "cd '$demo_repo'\r"
-expect "ww>"
-send -- "ww\r"
-expect "Use Up/Down"
-send -- "\033\[B"
-after 250
+
+await_prompt
+pause_for $step_delay_ms
+send_text "ww"
 send -- "\r"
-expect "ww>"
-send -- "pwd\r"
-expect ".worktrees/feat-a"
-expect "ww>"
-send -- "ww new feat-demo\r"
-expect "ww>"
-send -- "git branch --show-current\r"
+expect -re {Select a worktree> ?}
+pause_for $fzf_focus_delay_ms
+send_text "feat-a"
+pause_for $fzf_query_settle_ms
+send -- "\r"
+
+await_prompt
+pause_for $step_delay_ms
+send_text "git branch --show-current"
+send -- "\r"
+expect "feat-a"
+
+await_prompt
+pause_for $step_delay_ms
+send_text "ww new feat-demo"
+send -- "\r"
+
+await_prompt
+pause_for $step_delay_ms
+send_text "git branch --show-current"
+send -- "\r"
 expect "feat-demo"
-expect "ww>"
-send -- "ww list\r"
-expect "feat-demo"
-expect "ww>"
-send -- "exit\r"
+
+await_prompt
+pause_for $step_delay_ms
+send_text "ww main"
+send -- "\r"
+
+await_prompt
+pause_for $step_delay_ms
+send_text "ww rm feat-demo"
+send -- "\r"
+expect "DELETE_BRANCH"
+expect -re {Remove worktree feat-demo\? \[y/N\]: ?}
+pause_for $confirm_delay_ms
+send_text "y"
+send -- "\r"
+expect "removed worktree"
+expect "deleted branch"
+
+await_prompt
+pause_for $step_delay_ms
+send_text "exit"
+send -- "\r"
 expect eof
