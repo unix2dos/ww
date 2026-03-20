@@ -35,6 +35,30 @@ func TestPreviewRemovalMarksDirtyAndUnmergedWorktree(t *testing.T) {
 	}
 }
 
+func TestPreviewRemovalKeepsBaseBranchEvenWhenMerged(t *testing.T) {
+	runner := &recordingRunner{
+		outputs: map[string]string{
+			key("git", "-C", "/repo/.worktrees/main", "status", "--porcelain"):                                   "",
+			key("git", "-C", "/repo/.worktrees/main", "branch", "--format=%(refname:short)", "--merged", "main"): "main\n",
+		},
+	}
+
+	got, err := PreviewRemoval(context.Background(), runner, worktree.Worktree{
+		Path:        "/repo/.worktrees/main",
+		BranchLabel: "main",
+		BranchRef:   "refs/heads/main",
+	}, "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.BranchMerged {
+		t.Fatalf("expected base branch to still count as merged, got %#v", got)
+	}
+	if got.DeleteBranch {
+		t.Fatalf("expected base branch deletion to be skipped, got %#v", got)
+	}
+}
+
 func TestRemoveWorktreeDeletesMergedBranch(t *testing.T) {
 	runner := &recordingRunner{
 		outputs: map[string]string{
@@ -90,6 +114,36 @@ func TestRemoveWorktreeKeepsUnmergedBranch(t *testing.T) {
 	}
 	if got.KeptBranchReason != "not merged" {
 		t.Fatalf("expected keep reason, got %#v", got)
+	}
+}
+
+func TestRemoveWorktreeKeepsBaseBranch(t *testing.T) {
+	runner := &recordingRunner{
+		outputs: map[string]string{
+			key("git", "rev-parse", "--show-toplevel"):                                                           "/repo/.worktrees/current\n",
+			key("git", "-C", "/repo/.worktrees/current", "rev-parse", "--git-common-dir"):                        "/repo/.git\n",
+			key("git", "-C", "/repo/.worktrees/main", "status", "--porcelain"):                                   "",
+			key("git", "-C", "/repo/.worktrees/main", "branch", "--format=%(refname:short)", "--merged", "main"): "main\n",
+		},
+	}
+
+	got, err := RemoveWorktree(context.Background(), runner, worktree.Worktree{
+		Path:        "/repo/.worktrees/main",
+		BranchLabel: "main",
+		BranchRef:   "refs/heads/main",
+	}, RemoveOptions{BaseBranch: "main"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.RemovedWorktree || got.DeletedBranch {
+		t.Fatalf("expected only worktree removal, got %#v", got)
+	}
+	if got.KeptBranchReason != "base branch" {
+		t.Fatalf("expected base-branch keep reason, got %#v", got)
+	}
+	deleteCmd := key("git", "-C", "/repo", "branch", "-d", "main")
+	if _, ok := runner.commands[deleteCmd]; ok {
+		t.Fatalf("did not expect delete command %q, got %#v", deleteCmd, runner.commands)
 	}
 }
 

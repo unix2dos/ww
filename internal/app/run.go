@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -260,6 +261,14 @@ type removalCandidate struct {
 	preview git.RemovalPreview
 }
 
+type removalSeverity int
+
+const (
+	removalSeveritySafe removalSeverity = iota
+	removalSeverityReview
+	removalSeverityStop
+)
+
 func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut io.Writer, deps Deps) int {
 	cfg, err := parseRemoveArgs(args)
 	if err != nil {
@@ -299,13 +308,17 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 	}
 
 	reader := bufio.NewReader(in)
-	selected, ok, exitCode := selectRemovalCandidate(reader, errOut, previewed, cfg.target)
+	selected, ok, exitCode := selectRemovalCandidate(reader, errOut, previewed, cfg.target, cfg.force)
 	if !ok {
 		return exitCode
 	}
 
-	fmt.Fprintf(errOut, "Selected: %s %s [%s]\n", selected.item.BranchLabel, selected.item.Path, removalAction(selected.preview))
-	confirmed, err := confirmPrompt(reader, errOut, fmt.Sprintf("Remove worktree %s? [y/N]: ", selected.item.BranchLabel))
+	renderRemovalSummary(errOut, selected, cfg.force)
+	if removalSeverityFor(selected.preview, cfg.force) == removalSeverityStop {
+		return 1
+	}
+
+	confirmed, err := confirmPrompt(reader, errOut, "Delete this worktree? [y/N]: ")
 	if err != nil {
 		return writeSelectionError(errOut, err)
 	}
@@ -384,7 +397,7 @@ func filterNonCurrent(items []worktree.Worktree) []worktree.Worktree {
 	return out
 }
 
-func selectRemovalCandidate(reader *bufio.Reader, errOut io.Writer, candidates []removalCandidate, target string) (removalCandidate, bool, int) {
+func selectRemovalCandidate(reader *bufio.Reader, errOut io.Writer, candidates []removalCandidate, target string, force bool) (removalCandidate, bool, int) {
 	if target != "" {
 		items := make([]worktree.Worktree, 0, len(candidates))
 		byPath := make(map[string]removalCandidate, len(candidates))
@@ -400,49 +413,206 @@ func selectRemovalCandidate(reader *bufio.Reader, errOut io.Writer, candidates [
 		return byPath[selected.Path], true, 0
 	}
 
-	renderRemovalCandidates(errOut, candidates)
-	index, err := readChoice(reader, errOut, "Select worktree to remove [number]: ", len(candidates), 0)
+	display := orderedRemovalCandidates(candidates, force)
+	renderRemovalCandidates(errOut, display, force)
+	index, err := readChoice(reader, errOut, "Select worktree to remove [number]: ", len(display), 0)
 	if err != nil {
 		return removalCandidate{}, false, writeSelectionError(errOut, err)
 	}
-	return candidates[index-1], true, 0
+	return display[index-1], true, 0
 }
 
-func renderRemovalCandidates(w io.Writer, candidates []removalCandidate) {
-	for i, candidate := range candidates {
-		fmt.Fprintf(w, "[%d] %s %s %s [%s; %s]\n",
-			i+1,
-			removalAction(candidate.preview),
-			candidate.item.BranchLabel,
-			candidate.item.Path,
-			dirtyLabel(candidate.preview.Dirty),
-			mergeLabel(candidate.preview),
-		)
+func orderedRemovalCandidates(candidates []removalCandidate, force bool) []removalCandidate {
+	ordered := make([]removalCandidate, 0, len(candidates))
+	for _, severity := range []removalSeverity{removalSeveritySafe, removalSeverityReview, removalSeverityStop} {
+		for _, candidate := range candidates {
+			if removalSeverityFor(candidate.preview, force) == severity {
+				ordered = append(ordered, candidate)
+			}
+		}
+	}
+	return ordered
+}
+
+func renderRemovalCandidates(w io.Writer, candidates []removalCandidate, force bool) {
+	count := 0
+	for _, severity := range []removalSeverity{removalSeveritySafe, removalSeverityReview, removalSeverityStop} {
+		group := filterRemovalCandidatesBySeverity(candidates, severity, force)
+		if len(group) == 0 {
+			continue
+		}
+		if count > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintln(w, removalSeverityHeading(severity))
+		for _, candidate := range group {
+			count++
+			label := removalCandidateLabel(candidate.item)
+			reason := removalCandidateReason(candidate.preview, force)
+			if reason == "" {
+				fmt.Fprintf(w, "[%d] %s %s\n", count, removalSeverityIcon(severity), label)
+				fmt.Fprintf(w, "    %s\n", candidate.item.Path)
+				continue
+			}
+			fmt.Fprintf(w, "[%d] %s %s  %s\n", count, removalSeverityIcon(severity), label, reason)
+			fmt.Fprintf(w, "    %s\n", candidate.item.Path)
+		}
 	}
 }
 
-func removalAction(preview git.RemovalPreview) string {
+func filterRemovalCandidatesBySeverity(candidates []removalCandidate, severity removalSeverity, force bool) []removalCandidate {
+	group := make([]removalCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if removalSeverityFor(candidate.preview, force) == severity {
+			group = append(group, candidate)
+		}
+	}
+	return group
+}
+
+func removalSeverityFor(preview git.RemovalPreview, force bool) removalSeverity {
+	switch {
+	case preview.Dirty && !force:
+		return removalSeverityStop
+	case !preview.Dirty && preview.DeleteBranch:
+		return removalSeveritySafe
+	default:
+		return removalSeverityReview
+	}
+}
+
+func removalSeverityHeading(severity removalSeverity) string {
+	switch severity {
+	case removalSeveritySafe:
+		return "Safe to delete"
+	case removalSeverityStop:
+		return "Not safe to delete"
+	default:
+		return "Review before deleting"
+	}
+}
+
+func removalSeverityIcon(severity removalSeverity) string {
+	switch severity {
+	case removalSeveritySafe:
+		return "✅"
+	case removalSeverityStop:
+		return "🛑"
+	default:
+		return "⚠️"
+	}
+}
+
+func removalCandidateLabel(item worktree.Worktree) string {
+	if strings.TrimSpace(item.BranchLabel) != "" {
+		return item.BranchLabel
+	}
+	return filepath.Base(item.Path)
+}
+
+func removalCandidateReason(preview git.RemovalPreview, force bool) string {
+	switch {
+	case preview.Dirty && !force:
+		return "Contains uncommitted changes"
+	case preview.Dirty:
+		return "Will discard uncommitted changes"
+	case preview.Worktree.BranchLabel == preview.BaseBranch && preview.Worktree.BranchRef != "":
+		return "Base branch will be kept"
+	case preview.Worktree.BranchRef == "":
+		return "Not on a branch"
+	case !preview.BranchMerged:
+		return "Branch will be kept"
+	default:
+		return ""
+	}
+}
+
+func renderRemovalSummary(w io.Writer, candidate removalCandidate, force bool) {
+	severity := removalSeverityFor(candidate.preview, force)
+	label := removalCandidateLabel(candidate.item)
+
+	fmt.Fprintf(w, "Selected: %s\n\n", label)
+	fmt.Fprintf(w, "%s %s\n", removalSeverityIcon(severity), removalSummaryTitle(severity))
+
+	renderSummarySection(w, "Will remove:", removalWillRemove(candidate.preview))
+	renderSummarySection(w, "Will keep:", removalWillKeep(candidate.preview))
+	renderSummarySection(w, "Will not remove:", removalWillNotRemove(candidate.preview))
+	renderSummarySection(w, "Risk:", removalRiskItems(candidate.preview, force))
+	renderSummarySection(w, "Next step:", removalNextSteps(candidate.preview, force))
+}
+
+func removalSummaryTitle(severity removalSeverity) string {
+	switch severity {
+	case removalSeveritySafe:
+		return "Safe to delete"
+	case removalSeverityStop:
+		return "Not safe to delete"
+	default:
+		return "Review before deleting"
+	}
+}
+
+func renderSummarySection(w io.Writer, title string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, title)
+	for _, item := range items {
+		fmt.Fprintf(w, "- %s\n", item)
+	}
+}
+
+func removalWillRemove(preview git.RemovalPreview) []string {
+	items := []string{fmt.Sprintf("worktree directory %s", preview.Worktree.Path)}
 	if preview.DeleteBranch {
-		return "DELETE_BRANCH"
+		items = append(items, fmt.Sprintf("branch %s (already merged into %s)", removalCandidateLabel(preview.Worktree), preview.BaseBranch))
 	}
-	return "KEEP_BRANCH"
+	return items
 }
 
-func dirtyLabel(dirty bool) string {
-	if dirty {
-		return "DIRTY"
+func removalWillKeep(preview git.RemovalPreview) []string {
+	switch {
+	case preview.Worktree.BranchRef == "":
+		return []string{"no branch will be deleted"}
+	case preview.Worktree.BranchLabel == preview.BaseBranch:
+		return []string{fmt.Sprintf("branch %s (not deleted because it is the base branch)", removalCandidateLabel(preview.Worktree))}
+	case !preview.BranchMerged:
+		return []string{fmt.Sprintf("branch %s (not merged into %s)", removalCandidateLabel(preview.Worktree), preview.BaseBranch)}
+	default:
+		return nil
 	}
-	return "CLEAN"
 }
 
-func mergeLabel(preview git.RemovalPreview) string {
+func removalWillNotRemove(preview git.RemovalPreview) []string {
+	if preview.DeleteBranch {
+		return []string{fmt.Sprintf("commits already merged into %s", preview.BaseBranch)}
+	}
+	return nil
+}
+
+func removalRiskItems(preview git.RemovalPreview, force bool) []string {
+	items := make([]string, 0, 2)
+	switch {
+	case preview.Dirty && force:
+		items = append(items, "uncommitted changes will be lost")
+	case preview.Dirty:
+		items = append(items, "uncommitted changes detected")
+	}
 	if preview.Worktree.BranchRef == "" {
-		return "DETACHED"
+		items = append(items, "this worktree is not on a branch")
 	}
-	if preview.BranchMerged {
-		return "MERGED"
+	return items
+}
+
+func removalNextSteps(preview git.RemovalPreview, force bool) []string {
+	if preview.Dirty && !force {
+		return []string{
+			"commit or stash your changes",
+			"rerun with --force to discard them",
+		}
 	}
-	return "NOT_MERGED"
+	return nil
 }
 
 func readChoice(reader *bufio.Reader, errOut io.Writer, prompt string, max int, defaultIndex int) (int, error) {

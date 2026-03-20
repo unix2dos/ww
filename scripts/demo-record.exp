@@ -93,8 +93,8 @@ await_prompt
 pause_for $step_delay_ms
 send_text "ww rm feat-demo"
 send -- "\r"
-expect "DELETE_BRANCH"
-expect -re {Remove worktree feat-demo\? \[y/N\]: ?}
+expect "✅ Safe to delete"
+expect -re {Delete this worktree\? \[y/N\]: ?}
 pause_for $confirm_delay_ms
 send_text "y"
 send -- "\r"

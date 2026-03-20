@@ -148,7 +148,7 @@ ww rm --force feat-a
 ww rm --base release/1.0 feat-a
 ```
 
-`ww rm` lists removable worktrees, shows whether each one is dirty or merged, asks for confirmation, removes the worktree, and only deletes the branch when it is already merged into the effective base branch.
+`ww rm` groups removable worktrees by deletion risk, prints a plain-language summary card after selection, removes the worktree, and only deletes the branch when it is already merged into the effective base branch. Dirty worktrees stop before confirmation unless you explicitly rerun with `--force`.
 
 ### Typical Flow
 

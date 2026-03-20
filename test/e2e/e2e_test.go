@@ -266,6 +266,9 @@ func TestCLIRemovesMergedWorktreeAndBranch(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
 	}
+	if !strings.Contains(stderr.String(), "✅ Safe to delete") || !strings.Contains(stderr.String(), "branch alpha (already merged into main)") {
+		t.Fatalf("expected safe summary card on stderr, got %q", stderr.String())
+	}
 	if !strings.Contains(stdout.String(), "deleted branch alpha") {
 		t.Fatalf("expected branch deletion output, got %q", stdout.String())
 	}
@@ -308,6 +311,39 @@ func TestCLIRemovesWorktreeButKeepsUnmergedBranch(t *testing.T) {
 	out := runGitOutput(t, repo.Root, "branch", "--list", "alpha")
 	if !strings.Contains(out, "alpha") {
 		t.Fatalf("expected alpha branch to remain, got %q", out)
+	}
+}
+
+func TestCLIRmDirtyWorktreeStopsBeforeConfirmationWithoutForce(t *testing.T) {
+	repo := newTestRepo(t)
+	alpha := repo.AddWorktree(t, "alpha")
+	if err := os.WriteFile(filepath.Join(alpha, "README.md"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+	bin := buildCLI(t)
+
+	cmd := exec.CommandContext(context.Background(), bin, "rm", "alpha")
+	cmd.Dir = repo.Root
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected dirty removal to fail without --force")
+	}
+	if !strings.Contains(stderr.String(), "🛑 Not safe to delete") || !strings.Contains(stderr.String(), "rerun with --force") {
+		t.Fatalf("expected stop card on stderr, got %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Delete this worktree? [y/N]:") {
+		t.Fatalf("expected no confirmation prompt for dirty worktree, got %q", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout output, got %q", stdout.String())
+	}
+	if _, err := os.Stat(alpha); err != nil {
+		t.Fatalf("expected dirty worktree to remain, got err=%v", err)
 	}
 }
 

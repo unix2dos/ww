@@ -55,7 +55,7 @@ func PreviewRemoval(ctx context.Context, runner Runner, item worktree.Worktree, 
 		return RemovalPreview{}, err
 	}
 	preview.BranchMerged = merged
-	preview.DeleteBranch = merged
+	preview.DeleteBranch = merged && item.BranchLabel != baseBranch
 	return preview, nil
 }
 
@@ -105,6 +105,12 @@ func RemoveWorktree(ctx context.Context, runner Runner, item worktree.Worktree, 
 	if item.BranchRef == "" {
 		result.KeptBranchReason = "detached"
 		return result, nil
+	}
+	if !preview.DeleteBranch {
+		if item.BranchLabel == opts.BaseBranch {
+			result.KeptBranchReason = "base branch"
+			return result, nil
+		}
 	}
 	if !preview.BranchMerged {
 		result.KeptBranchReason = "not merged"
