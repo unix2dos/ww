@@ -13,17 +13,6 @@ func Normalize(items []Worktree) []Worktree {
 	copy(out, items)
 
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].IsCurrent != out[j].IsCurrent {
-			return out[i].IsCurrent
-		}
-		iHasMRU := out[i].LastUsedAt > 0
-		jHasMRU := out[j].LastUsedAt > 0
-		if iHasMRU != jHasMRU {
-			return iHasMRU
-		}
-		if iHasMRU && out[i].LastUsedAt != out[j].LastUsedAt {
-			return out[i].LastUsedAt > out[j].LastUsedAt
-		}
 		if out[i].BranchLabel != out[j].BranchLabel {
 			return out[i].BranchLabel < out[j].BranchLabel
 		}

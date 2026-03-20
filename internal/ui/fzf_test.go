@@ -9,16 +9,16 @@ import (
 	"ww/internal/worktree"
 )
 
-func TestFormatFzfCandidatesIncludesIndexMarkerBranchAndPath(t *testing.T) {
+func TestFormatFzfCandidatesIncludesIndexStatusBranchAndPath(t *testing.T) {
 	got := string(formatFzfCandidates([]worktree.Worktree{
 		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true},
 		{Index: 2, BranchLabel: "feat-a", Path: "/repo/.worktrees/feat-a"},
 	}))
 
-	if !strings.Contains(got, "1\t*\tmain\t/repo") {
+	if !strings.Contains(got, "1\tACTIVE\tmain\t/repo") {
 		t.Fatalf("expected current candidate, got %q", got)
 	}
-	if !strings.Contains(got, "2\t \tfeat-a\t/repo/.worktrees/feat-a") {
+	if !strings.Contains(got, "2\t\tfeat-a\t/repo/.worktrees/feat-a") {
 		t.Fatalf("expected non-current candidate, got %q", got)
 	}
 }
@@ -26,7 +26,7 @@ func TestFormatFzfCandidatesIncludesIndexMarkerBranchAndPath(t *testing.T) {
 func TestSelectWorktreeWithFzfReturnsSelectedWorktree(t *testing.T) {
 	runner := &fakeFzfRunner{
 		lookPath: "/usr/bin/fzf",
-		stdout:   []byte("2\t \tfeat-a\t/repo/.worktrees/feat-a\n"),
+		stdout:   []byte("2\t\tfeat-a\t/repo/.worktrees/feat-a\n"),
 	}
 
 	got, err := SelectWorktreeWithFzf(context.Background(), []worktree.Worktree{

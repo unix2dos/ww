@@ -11,12 +11,12 @@ import (
 	"testing"
 )
 
-func TestCLISelectsSecondWorktreePath(t *testing.T) {
+func TestCLISelectsAlphabeticalIndexPath(t *testing.T) {
 	repo := newTestRepo(t)
 	second := repo.AddWorktree(t, "alpha")
 	bin := buildCLI(t)
 
-	cmd := exec.CommandContext(context.Background(), bin, "switch-path", "2")
+	cmd := exec.CommandContext(context.Background(), bin, "switch-path", "1")
 	cmd.Dir = repo.Root
 
 	var stdout, stderr bytes.Buffer
@@ -125,12 +125,12 @@ func TestCLIListsWorktrees(t *testing.T) {
 		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), "[1]") || !strings.Contains(stdout.String(), "/.worktrees/alpha") {
+	if !strings.Contains(stdout.String(), "[1]") || !strings.Contains(stdout.String(), "/.worktrees/alpha") || !strings.Contains(stdout.String(), "ACTIVE") {
 		t.Fatalf("expected human-readable list output, got %q", stdout.String())
 	}
 }
 
-func TestCLIListReflectsMRUAfterSwitch(t *testing.T) {
+func TestCLIListStaysAlphabeticalAfterSwitch(t *testing.T) {
 	repo := newTestRepo(t)
 	repo.AddWorktree(t, "alpha")
 	runGit(t, repo.Root, "branch", "beta")
@@ -158,8 +158,11 @@ func TestCLIListReflectsMRUAfterSwitch(t *testing.T) {
 	}
 
 	got := stdout.String()
-	if strings.Index(got, "/.worktrees/beta") > strings.Index(got, "/.worktrees/alpha") {
-		t.Fatalf("expected beta before alpha after MRU update, got %q", got)
+	if strings.Index(got, "/.worktrees/alpha") > strings.Index(got, "/.worktrees/beta") {
+		t.Fatalf("expected alpha before beta in stable ordering, got %q", got)
+	}
+	if strings.Index(got, "ACTIVE main") < strings.Index(got, "/.worktrees/beta") {
+		t.Fatalf("expected current main worktree to remain in alphabetical position, got %q", got)
 	}
 }
 
@@ -216,6 +219,99 @@ func TestCLICreatesNewWorktreePathFromLinkedWorktreeAtRepositoryRoot(t *testing.
 	}
 	if _, err := os.Stat(want); err != nil {
 		t.Fatalf("expected worktree path to exist: %v", err)
+	}
+}
+
+func TestCLIRemovesMergedWorktreeAndBranch(t *testing.T) {
+	repo := newTestRepo(t)
+	alpha := repo.AddWorktree(t, "alpha")
+	runGit(t, repo.Root, "merge", "--no-ff", "alpha", "-m", "merge alpha")
+	bin := buildCLI(t)
+
+	cmd := exec.CommandContext(context.Background(), bin, "rm", "alpha")
+	cmd.Dir = repo.Root
+	cmd.Stdin = strings.NewReader("y\n")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "deleted branch alpha") {
+		t.Fatalf("expected branch deletion output, got %q", stdout.String())
+	}
+	if _, err := os.Stat(alpha); !os.IsNotExist(err) {
+		t.Fatalf("expected removed worktree path to disappear, got err=%v", err)
+	}
+	out := runGitOutput(t, repo.Root, "branch", "--list", "alpha")
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected alpha branch to be deleted, got %q", out)
+	}
+}
+
+func TestCLIRemovesWorktreeButKeepsUnmergedBranch(t *testing.T) {
+	repo := newTestRepo(t)
+	alpha := repo.AddWorktree(t, "alpha")
+	if err := os.WriteFile(filepath.Join(alpha, "README.md"), []byte("alpha-only\n"), 0o644); err != nil {
+		t.Fatalf("write feature file: %v", err)
+	}
+	runGit(t, alpha, "add", "README.md")
+	runGit(t, alpha, "commit", "-m", "alpha only change")
+	bin := buildCLI(t)
+
+	cmd := exec.CommandContext(context.Background(), bin, "rm", "alpha")
+	cmd.Dir = repo.Root
+	cmd.Stdin = strings.NewReader("y\n")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "kept branch alpha (not merged)") {
+		t.Fatalf("expected keep-branch output, got %q", stdout.String())
+	}
+	if _, err := os.Stat(alpha); !os.IsNotExist(err) {
+		t.Fatalf("expected removed worktree path to disappear, got err=%v", err)
+	}
+	out := runGitOutput(t, repo.Root, "branch", "--list", "alpha")
+	if !strings.Contains(out, "alpha") {
+		t.Fatalf("expected alpha branch to remain, got %q", out)
+	}
+}
+
+func TestCLIDiffPrintsSummaryAndPatch(t *testing.T) {
+	repo := newTestRepo(t)
+	alpha := repo.AddWorktree(t, "alpha")
+	if err := os.WriteFile(filepath.Join(alpha, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatalf("write feature file: %v", err)
+	}
+	runGit(t, alpha, "add", "README.md")
+	runGit(t, alpha, "commit", "-m", "update alpha readme")
+	bin := buildCLI(t)
+
+	cmd := exec.CommandContext(context.Background(), bin, "diff", "--patch", "main")
+	cmd.Dir = alpha
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Ahead: 1") || !strings.Contains(stdout.String(), "README.md") {
+		t.Fatalf("expected summary output, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "diff --git") {
+		t.Fatalf("expected patch output, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
 	}
 }
 

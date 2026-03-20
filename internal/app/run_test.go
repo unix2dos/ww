@@ -31,6 +31,12 @@ func TestRunHelperHelpPrintsUsageAndExitsZero(t *testing.T) {
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("new-path")) {
 		t.Fatalf("expected help to mention new-path, got %q", got)
 	}
+	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("rm")) {
+		t.Fatalf("expected help to mention rm, got %q", got)
+	}
+	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("diff")) {
+		t.Fatalf("expected help to mention diff, got %q", got)
+	}
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("create")) {
 		t.Fatalf("expected help to describe creation behavior, got %q", got)
 	}
@@ -180,8 +186,14 @@ func TestRunListPrintsMenuWithoutPrompt(t *testing.T) {
 	if stdout.String() == "" {
 		t.Fatal("expected list output on stdout")
 	}
-	if strings.Index(stdout.String(), "/repo/.worktrees/beta") > strings.Index(stdout.String(), "/repo/.worktrees/alpha") {
-		t.Fatalf("expected MRU ordering in list output, got %q", stdout.String())
+	if strings.Index(stdout.String(), "/repo/.worktrees/alpha") > strings.Index(stdout.String(), "/repo/.worktrees/beta") {
+		t.Fatalf("expected alphabetical ordering in list output, got %q", stdout.String())
+	}
+	if strings.Index(stdout.String(), "ACTIVE main /repo") < strings.Index(stdout.String(), "/repo/.worktrees/beta") {
+		t.Fatalf("expected current worktree to keep alphabetical position, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "[3] ACTIVE main /repo") {
+		t.Fatalf("expected ACTIVE status in list output, got %q", stdout.String())
 	}
 	if bytes.Contains(stdout.Bytes(), []byte("Select a worktree")) {
 		t.Fatalf("expected no prompt in list output, got %q", stdout.String())
@@ -260,6 +272,246 @@ func TestRunNewPathUsesCanonicalRepoKeyWhenCreatedPathUsesAlias(t *testing.T) {
 	}
 }
 
+func TestRunRmSelectsCandidateConfirmsAndPrintsHumanResult(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		removed:       removed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+			"/repo/.worktrees/beta": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+				BaseBranch:   "main",
+				Dirty:        true,
+				BranchMerged: false,
+			},
+		},
+		removeResult: git.RemoveResult{
+			WorktreePath:    "/repo/.worktrees/alpha",
+			Branch:          "alpha",
+			BaseBranch:      "main",
+			RemovedWorktree: true,
+			DeletedBranch:   true,
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm"}, strings.NewReader("1\ny\n"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "DELETE_BRANCH") || !strings.Contains(stderr.String(), "DIRTY") {
+		t.Fatalf("expected candidate risk summary on stderr, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "removed worktree") || !strings.Contains(stdout.String(), "deleted branch") {
+		t.Fatalf("expected human-readable removal output, got %q", stdout.String())
+	}
+	if removed.item.Path != "/repo/.worktrees/alpha" || removed.opts.BaseBranch != "main" || removed.opts.Force {
+		t.Fatalf("expected selected removal call, got %#v", removed)
+	}
+}
+
+func TestRunRmOutputsJSONWhenRequested(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "release/1.0",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+		},
+		removeResult: git.RemoveResult{
+			WorktreePath:    "/repo/.worktrees/alpha",
+			Branch:          "alpha",
+			BaseBranch:      "release/1.0",
+			RemovedWorktree: true,
+			DeletedBranch:   true,
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "--json", "--base", "release/1.0", "alpha"}, strings.NewReader("y\n"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), `"deleted_branch":true`) || !strings.Contains(stdout.String(), `"base_branch":"release/1.0"`) {
+		t.Fatalf("expected json output, got %q", stdout.String())
+	}
+	if stderr.Len() == 0 {
+		t.Fatalf("expected confirmation details on stderr")
+	}
+}
+
+func TestRunRmPassesForceToRemoval(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				Dirty:        true,
+				BranchMerged: false,
+			},
+		},
+		removeResult: git.RemoveResult{
+			WorktreePath:     "/repo/.worktrees/alpha",
+			Branch:           "alpha",
+			BaseBranch:       "main",
+			RemovedWorktree:  true,
+			KeptBranchReason: "not merged",
+		},
+		removed: removed,
+	}
+
+	code := Run(context.Background(), []string{"rm", "--force", "alpha"}, strings.NewReader("y\n"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !removed.opts.Force {
+		t.Fatalf("expected force to be forwarded, got %#v", removed)
+	}
+}
+
+func TestRunDiffWithoutArgsUsesDefaultBranchWhenEnterIsPressed(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	diffed := &diffCall{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		diffed:        diffed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main"},
+			{Path: "/repo/.worktrees/feat-current", BranchLabel: "feat-current", IsCurrent: true},
+		},
+		diffReport: git.DiffReport{
+			CurrentBranch: "feat-current",
+			TargetBranch:  "main",
+			Ahead:         2,
+			Behind:        1,
+			ChangedFiles:  1,
+			Insertions:    10,
+			Deletions:     2,
+			Commits: []git.DiffCommit{
+				{Hash: "aaa111", Subject: "feat: add rm"},
+			},
+			Files: []git.DiffFile{
+				{Path: "internal/app/run.go", Insertions: 10, Deletions: 2},
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"diff"}, strings.NewReader("\n"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if diffed.target != "main" {
+		t.Fatalf("expected default branch target, got %#v", diffed)
+	}
+	if !strings.Contains(stdout.String(), "Ahead: 2") || !strings.Contains(stdout.String(), "internal/app/run.go") {
+		t.Fatalf("expected diff summary output, got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "default") {
+		t.Fatalf("expected default target hint on stderr, got %q", stderr.String())
+	}
+}
+
+func TestRunDiffWithPatchPrintsSummaryAndPatch(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	diffed := &diffCall{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		diffed:  diffed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main"},
+			{Path: "/repo/.worktrees/feat-current", BranchLabel: "feat-current", IsCurrent: true},
+		},
+		diffReport: git.DiffReport{
+			CurrentBranch: "feat-current",
+			TargetBranch:  "main",
+			Ahead:         1,
+			Behind:        0,
+			ChangedFiles:  1,
+			Insertions:    3,
+			Deletions:     1,
+		},
+		diffPatch: "diff --git a/file b/file\n",
+	}
+
+	code := Run(context.Background(), []string{"diff", "--patch", "main"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if diffed.target != "main" || !diffed.withPatch {
+		t.Fatalf("expected patch diff call, got %#v", diffed)
+	}
+	if !strings.Contains(stdout.String(), "Ahead: 1") || !strings.Contains(stdout.String(), "diff --git a/file b/file") {
+		t.Fatalf("expected summary and patch, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr, got %q", stderr.String())
+	}
+}
+
+func TestRunDiffFallsBackToExplicitBranchWhenNoWorktreeMatches(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	diffed := &diffCall{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		diffed:  diffed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main"},
+			{Path: "/repo/.worktrees/feat-current", BranchLabel: "feat-current", IsCurrent: true},
+		},
+		diffReport: git.DiffReport{
+			CurrentBranch: "feat-current",
+			TargetBranch:  "release/1.0",
+		},
+	}
+
+	code := Run(context.Background(), []string{"diff", "release/1.0"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if diffed.target != "release/1.0" {
+		t.Fatalf("expected explicit branch fallback, got %#v", diffed)
+	}
+}
+
 func TestRunSwitchPathContinuesWhenStateLoadFails(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -279,7 +531,7 @@ func TestRunSwitchPathContinuesWhenStateLoadFails(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
-	if stdout.String() != "/repo/.worktrees/alpha\n" {
+	if stdout.String() != "/repo/.worktrees/beta\n" {
 		t.Fatalf("expected fallback ordering path on stdout, got %q", stdout.String())
 	}
 	if !bytes.Contains(stderr.Bytes(), []byte("state load unavailable")) {
@@ -305,7 +557,7 @@ func TestRunSwitchPathContinuesWhenStateTouchFails(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
-	if stdout.String() != "/repo/.worktrees/alpha\n" {
+	if stdout.String() != "/repo\n" {
 		t.Fatalf("expected path on stdout, got %q", stdout.String())
 	}
 	if !bytes.Contains(stderr.Bytes(), []byte("state update skipped")) {
@@ -571,7 +823,7 @@ func TestRunSwitchPathInteractiveSelectionWritesTUIToStderrAndPathToStdout(t *te
 	if !bytes.Contains(stderr.Bytes(), []byte("Enter to confirm")) {
 		t.Fatalf("expected tui instructions on stderr, got %q", stderr.String())
 	}
-	if !bytes.Contains(stderr.Bytes(), []byte("* [2]   alpha /repo/.worktrees/alpha")) {
+	if !bytes.Contains(stderr.Bytes(), []byte("* [1]        alpha /repo/.worktrees/alpha")) {
 		t.Fatalf("expected active row on stderr, got %q", stderr.String())
 	}
 	if deps.touched.repoKey != "/repo/.git" || deps.touched.path != "/repo/.worktrees/alpha" {
@@ -675,25 +927,47 @@ func TestRunSwitchPathInteractiveSelectionReturnsNonZeroOnEOFWithoutSelection(t 
 }
 
 type fakeDeps struct {
-	repoKey     string
-	repoKeyErr  error
-	worktrees   []worktree.Worktree
-	err         error
-	fzfSelected worktree.Worktree
-	fzfErr      error
-	tuiSelected worktree.Worktree
-	tuiErr      error
-	createPath  string
-	createErr   error
-	loadErr     error
-	touchErr    error
-	state       map[string]map[string]int64
-	touched     *touchRecord
+	repoKey          string
+	repoKeyErr       error
+	worktrees        []worktree.Worktree
+	err              error
+	fzfSelected      worktree.Worktree
+	fzfErr           error
+	tuiSelected      worktree.Worktree
+	tuiErr           error
+	createPath       string
+	createErr        error
+	loadErr          error
+	touchErr         error
+	state            map[string]map[string]int64
+	touched          *touchRecord
+	defaultBranch    string
+	defaultBranchErr error
+	previews         map[string]git.RemovalPreview
+	previewErr       error
+	removeResult     git.RemoveResult
+	removeErr        error
+	removed          *removeCall
+	diffReport       git.DiffReport
+	diffErr          error
+	diffPatch        string
+	diffPatchErr     error
+	diffed           *diffCall
 }
 
 type touchRecord struct {
 	repoKey string
 	path    string
+}
+
+type removeCall struct {
+	item worktree.Worktree
+	opts git.RemoveOptions
+}
+
+type diffCall struct {
+	target    string
+	withPatch bool
 }
 
 func (f fakeDeps) CurrentRepoKey(context.Context) (string, error) {
@@ -769,4 +1043,53 @@ func (f fakeDeps) TouchWorktreeState(_ context.Context, repoKey, path string) er
 		f.touched.path = path
 	}
 	return nil
+}
+
+func (f fakeDeps) DefaultBranch(context.Context) (string, error) {
+	if f.defaultBranchErr != nil {
+		return "", f.defaultBranchErr
+	}
+	return f.defaultBranch, nil
+}
+
+func (f fakeDeps) PreviewRemoval(_ context.Context, item worktree.Worktree, _ string) (git.RemovalPreview, error) {
+	if f.previewErr != nil {
+		return git.RemovalPreview{}, f.previewErr
+	}
+	if got, ok := f.previews[item.Path]; ok {
+		return got, nil
+	}
+	return git.RemovalPreview{}, nil
+}
+
+func (f fakeDeps) RemoveWorktree(_ context.Context, item worktree.Worktree, opts git.RemoveOptions) (git.RemoveResult, error) {
+	if f.removed != nil {
+		f.removed.item = item
+		f.removed.opts = opts
+	}
+	if f.removeErr != nil {
+		return git.RemoveResult{}, f.removeErr
+	}
+	return f.removeResult, nil
+}
+
+func (f fakeDeps) DiffSummary(_ context.Context, targetBranch string) (git.DiffReport, error) {
+	if f.diffed != nil {
+		f.diffed.target = targetBranch
+	}
+	if f.diffErr != nil {
+		return git.DiffReport{}, f.diffErr
+	}
+	return f.diffReport, nil
+}
+
+func (f fakeDeps) DiffPatch(_ context.Context, targetBranch string) (string, error) {
+	if f.diffed != nil {
+		f.diffed.target = targetBranch
+		f.diffed.withPatch = true
+	}
+	if f.diffPatchErr != nil {
+		return "", f.diffPatchErr
+	}
+	return f.diffPatch, nil
 }

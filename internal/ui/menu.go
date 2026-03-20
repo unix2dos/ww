@@ -19,7 +19,7 @@ func RenderMenu(w io.Writer, items []worktree.Worktree) {
 }
 
 func formatMenuRow(item worktree.Worktree) string {
-	return fmt.Sprintf("[%d] %s %s %s", item.Index, worktreeMarker(item), item.BranchLabel, item.Path)
+	return fmt.Sprintf("[%d] %-6s %s %s", item.Index, worktreeStatus(item), item.BranchLabel, item.Path)
 }
 
 func formatTUIRow(item worktree.Worktree, active bool) string {
@@ -30,11 +30,11 @@ func formatTUIRow(item worktree.Worktree, active bool) string {
 	return fmt.Sprintf("%s %s", prefix, formatMenuRow(item))
 }
 
-func worktreeMarker(item worktree.Worktree) string {
+func worktreeStatus(item worktree.Worktree) string {
 	if item.IsCurrent {
-		return "*"
+		return "ACTIVE"
 	}
-	return " "
+	return ""
 }
 
 func ReadSelection(in io.Reader, errOut io.Writer, max int) (int, error) {

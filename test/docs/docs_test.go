@@ -38,7 +38,7 @@ func TestPagesDemoContract(t *testing.T) {
 	pagesWorkflow := mustReadFile(t, filepath.Join(root, ".github", "workflows", "pages.yml"))
 	for _, snippet := range []string{
 		"actions/configure-pages@v5",
-		"actions/upload-pages-artifact@v3",
+		"actions/upload-pages-artifact@v4",
 		"actions/deploy-pages@v4",
 		"path: docs",
 	} {

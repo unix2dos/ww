@@ -8,7 +8,7 @@ import (
 	"ww/internal/worktree"
 )
 
-func TestRenderMenuIncludesIndexBranchPathAndCurrentMarker(t *testing.T) {
+func TestRenderMenuIncludesIndexBranchPathAndActiveStatus(t *testing.T) {
 	var buf bytes.Buffer
 
 	RenderMenu(&buf, []worktree.Worktree{
@@ -17,10 +17,10 @@ func TestRenderMenuIncludesIndexBranchPathAndCurrentMarker(t *testing.T) {
 	})
 
 	got := buf.String()
-	if !strings.Contains(got, "[1] * main /repo") {
+	if !strings.Contains(got, "[1] ACTIVE main /repo") {
 		t.Fatalf("expected current row, got %q", got)
 	}
-	if !strings.Contains(got, "[2]   feat-a /repo/.worktrees/feat-a") {
+	if !strings.Contains(got, "[2]        feat-a /repo/.worktrees/feat-a") {
 		t.Fatalf("expected non-current row, got %q", got)
 	}
 	if !strings.Contains(got, "Select a worktree [number]: ") {

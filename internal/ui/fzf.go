@@ -81,13 +81,16 @@ func SelectWorktreeWithFzf(ctx context.Context, items []worktree.Worktree, runne
 func formatFzfCandidates(items []worktree.Worktree) []byte {
 	var buf strings.Builder
 	for _, item := range items {
-		marker := " "
-		if item.IsCurrent {
-			marker = "*"
-		}
-		fmt.Fprintf(&buf, "%d\t%s\t%s\t%s\n", item.Index, marker, item.BranchLabel, item.Path)
+		fmt.Fprintf(&buf, "%d\t%s\t%s\t%s\n", item.Index, fzfStatus(item), item.BranchLabel, item.Path)
 	}
 	return []byte(buf.String())
+}
+
+func fzfStatus(item worktree.Worktree) string {
+	if item.IsCurrent {
+		return "ACTIVE"
+	}
+	return ""
 }
 
 func parseFzfSelection(selection string) (int, error) {

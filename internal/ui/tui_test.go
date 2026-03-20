@@ -10,7 +10,7 @@ import (
 	"ww/internal/worktree"
 )
 
-func TestRenderTUIShowsCurrentMarkerAndActiveRow(t *testing.T) {
+func TestRenderTUIShowsActiveStatusAndActiveRow(t *testing.T) {
 	var buf bytes.Buffer
 
 	RenderTUI(&buf, []worktree.Worktree{
@@ -19,10 +19,10 @@ func TestRenderTUIShowsCurrentMarkerAndActiveRow(t *testing.T) {
 	}, 1)
 
 	got := buf.String()
-	if !strings.Contains(got, "  [1] * main /repo") {
+	if !strings.Contains(got, "  [1] ACTIVE main /repo") {
 		t.Fatalf("expected current row, got %q", got)
 	}
-	if !strings.Contains(got, "* [2]   feat-a /repo/.worktrees/feat-a") {
+	if !strings.Contains(got, "* [2]        feat-a /repo/.worktrees/feat-a") {
 		t.Fatalf("expected active row, got %q", got)
 	}
 	if !strings.Contains(got, "Enter to confirm") {
@@ -48,7 +48,7 @@ func TestSelectWorktreeWithTUIArrowDownThenEnterReturnsSelectedWorktree(t *testi
 	if got.Path != "/repo/.worktrees/feat-a" {
 		t.Fatalf("expected second worktree, got %#v", got)
 	}
-	if !strings.Contains(out.String(), "* [2]   feat-a /repo/.worktrees/feat-a") {
+	if !strings.Contains(out.String(), "* [2]        feat-a /repo/.worktrees/feat-a") {
 		t.Fatalf("expected moved selection to render, got %q", out.String())
 	}
 }
@@ -69,6 +69,24 @@ func TestSelectWorktreeWithTUIArrowUpWrapsToLastWorktree(t *testing.T) {
 	}
 	if got.Path != "/repo/.worktrees/feat-b" {
 		t.Fatalf("expected wrap to last worktree, got %#v", got)
+	}
+}
+
+func TestSelectWorktreeWithTUIEnterDefaultsToCurrentWorktree(t *testing.T) {
+	got, err := SelectWorktreeWithTUI(
+		strings.NewReader("\r"),
+		io.Discard,
+		[]worktree.Worktree{
+			{Index: 1, BranchLabel: "alpha", Path: "/repo/.worktrees/alpha"},
+			{Index: 2, BranchLabel: "main", Path: "/repo", IsCurrent: true},
+		},
+		nopRawMode{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Path != "/repo" {
+		t.Fatalf("expected current worktree by default, got %#v", got)
 	}
 }
 

@@ -72,7 +72,7 @@ func SelectWorktreeWithTUI(in io.Reader, out io.Writer, items []worktree.Worktre
 	defer restore()
 
 	reader := bufio.NewReader(in)
-	active := 0
+	active := initialActiveIndex(items)
 
 	for {
 		RenderTUI(out, items, active)
@@ -97,6 +97,15 @@ func SelectWorktreeWithTUI(in io.Reader, out io.Writer, items []worktree.Worktre
 			// Ignore unknown keys and wait for a navigational or confirm key.
 		}
 	}
+}
+
+func initialActiveIndex(items []worktree.Worktree) int {
+	for i, item := range items {
+		if item.IsCurrent {
+			return i
+		}
+	}
+	return 0
 }
 
 func readTUIKey(reader *bufio.Reader) (tuiKey, error) {
