@@ -6,8 +6,6 @@ One command to switch, create, and clean up worktrees.
 
 ## Demo
 
-GitHub README pages do not preserve a playable terminal player, so the preview below links to the live demo page.
-
 [![ww demo](docs/assets/ww-demo.svg)](https://unix2dos.github.io/ww/)
 
 The demo follows the core loop in under half a minute:
