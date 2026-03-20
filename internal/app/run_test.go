@@ -34,11 +34,31 @@ func TestRunHelperHelpPrintsUsageAndExitsZero(t *testing.T) {
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("rm")) {
 		t.Fatalf("expected help to mention rm, got %q", got)
 	}
+	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("|help|--help")) {
+		t.Fatalf("expected help to mention help subcommand, got %q", got)
+	}
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("create")) {
 		t.Fatalf("expected help to describe creation behavior, got %q", got)
 	}
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("fzf when available")) {
 		t.Fatalf("expected help to mention auto fzf routing, got %q", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunHelpSubcommandPrintsUsageAndExitsZero(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"help"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("Usage: ww-helper")) {
+		t.Fatalf("expected help usage on stdout, got %q", got)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())

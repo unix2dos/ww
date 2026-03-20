@@ -228,8 +228,7 @@ func TestWwHelpDoesNotCd(t *testing.T) {
 	runInstall(t, home)
 
 	origin := t.TempDir()
-	helpOutput := "Usage: fake help"
-	if err := writeExecutableScript(filepath.Join(home, ".local", "bin", "ww-helper"), fmt.Sprintf("#!/usr/bin/env bash\n[ \"$1\" = \"--help\" ] || exit 9\nprintf '%%s\\n' %q\nexit 0\n", helpOutput)); err != nil {
+	if err := writeExecutableScript(filepath.Join(home, ".local", "bin", "ww-helper"), "#!/usr/bin/env bash\nprintf 'helper-called:%s\\n' \"$1\"\nexit 9\n"); err != nil {
 		t.Fatalf("write fake ww-helper: %v", err)
 	}
 
@@ -237,11 +236,29 @@ func TestWwHelpDoesNotCd(t *testing.T) {
 		cd %q
 		source %q
 		ww --help
+		printf 'status1:%%d\n' $?
+		ww help
+		printf 'status2:%%d\n' $?
 		pwd
 	`, origin, rcPath))
 
-	if !strings.Contains(out, "Usage:") {
+	if !strings.Contains(out, "Usage:\n  ww [switch] [<index>|<name>]") {
 		t.Fatalf("expected help output, got %q", out)
+	}
+	if !strings.Contains(out, "\nCommands:\n") {
+		t.Fatalf("expected Commands section in help output, got %q", out)
+	}
+	if !strings.Contains(out, "\nExamples:\n") {
+		t.Fatalf("expected Examples section in help output, got %q", out)
+	}
+	if strings.Contains(out, "ww-helper") {
+		t.Fatalf("expected ww help output to avoid internal helper naming, got %q", out)
+	}
+	if strings.Contains(out, "helper-called:") {
+		t.Fatalf("expected shell help to avoid calling ww-helper --help, got %q", out)
+	}
+	if !strings.Contains(out, "status1:0") || !strings.Contains(out, "status2:0") {
+		t.Fatalf("expected both help paths to succeed, got %q", out)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if got := lines[len(lines)-1]; got != origin {

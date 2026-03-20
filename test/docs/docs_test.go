@@ -36,6 +36,7 @@ func TestPagesDemoContract(t *testing.T) {
 		"## Install",
 		"## Usage",
 		"## Release",
+		"`ww help` or `ww --help` prints the command summary.",
 	} {
 		if !strings.Contains(reference, snippet) {
 			t.Fatalf("expected reference doc to contain %q", snippet)

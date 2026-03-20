@@ -83,6 +83,7 @@ If you installed into Bash, reload `~/.bashrc` instead.
 - `ww list` prints worktrees without changing directory.
 - `ww new <name>` creates a new worktree under `./.worktrees/<name>` and switches into it.
 - `ww rm [<name>]` removes a worktree and deletes its branch only when that branch is already merged into the effective base branch.
+- `ww help` or `ww --help` prints the command summary.
 - `ww` uses `fzf` automatically when available and falls back to the built-in arrow-key selector otherwise.
 
 ### Interactive Pick
@@ -165,6 +166,7 @@ ww rm feat-a
 
 ```bash
 ww --help
+ww help
 ww 1
 ww switch feat-a
 ww list
