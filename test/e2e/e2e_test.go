@@ -11,9 +11,10 @@ import (
 	"testing"
 )
 
-func TestCLISelectsAlphabeticalIndexPath(t *testing.T) {
+func TestCLISelectsOldestIndexPath(t *testing.T) {
 	repo := newTestRepo(t)
-	second := repo.AddWorktree(t, "alpha")
+	second := repo.Root
+	repo.AddWorktree(t, "alpha")
 	bin := buildCLI(t)
 
 	cmd := exec.CommandContext(context.Background(), bin, "switch-path", "1")
@@ -130,7 +131,7 @@ func TestCLIListsWorktrees(t *testing.T) {
 	}
 }
 
-func TestCLIListStaysAlphabeticalAfterSwitch(t *testing.T) {
+func TestCLIListStaysInCreationOrderAfterSwitch(t *testing.T) {
 	repo := newTestRepo(t)
 	repo.AddWorktree(t, "alpha")
 	runGit(t, repo.Root, "branch", "beta")
@@ -158,11 +159,11 @@ func TestCLIListStaysAlphabeticalAfterSwitch(t *testing.T) {
 	}
 
 	got := stdout.String()
-	if strings.Index(got, "/.worktrees/alpha") > strings.Index(got, "/.worktrees/beta") {
-		t.Fatalf("expected alpha before beta in stable ordering, got %q", got)
+	if strings.Index(got, "ACTIVE main") > strings.Index(got, "/.worktrees/alpha") {
+		t.Fatalf("expected main before alpha in creation ordering, got %q", got)
 	}
-	if strings.Index(got, "ACTIVE main") < strings.Index(got, "/.worktrees/beta") {
-		t.Fatalf("expected current main worktree to remain in alphabetical position, got %q", got)
+	if strings.Index(got, "/.worktrees/alpha") > strings.Index(got, "/.worktrees/beta") {
+		t.Fatalf("expected alpha before beta in creation ordering, got %q", got)
 	}
 }
 
@@ -281,37 +282,6 @@ func TestCLIRemovesWorktreeButKeepsUnmergedBranch(t *testing.T) {
 	out := runGitOutput(t, repo.Root, "branch", "--list", "alpha")
 	if !strings.Contains(out, "alpha") {
 		t.Fatalf("expected alpha branch to remain, got %q", out)
-	}
-}
-
-func TestCLIDiffPrintsSummaryAndPatch(t *testing.T) {
-	repo := newTestRepo(t)
-	alpha := repo.AddWorktree(t, "alpha")
-	if err := os.WriteFile(filepath.Join(alpha, "README.md"), []byte("changed\n"), 0o644); err != nil {
-		t.Fatalf("write feature file: %v", err)
-	}
-	runGit(t, alpha, "add", "README.md")
-	runGit(t, alpha, "commit", "-m", "update alpha readme")
-	bin := buildCLI(t)
-
-	cmd := exec.CommandContext(context.Background(), bin, "diff", "--patch", "main")
-	cmd.Dir = alpha
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "Ahead: 1") || !strings.Contains(stdout.String(), "README.md") {
-		t.Fatalf("expected summary output, got %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "diff --git") {
-		t.Fatalf("expected patch output, got %q", stdout.String())
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("expected no stderr output, got %q", stderr.String())
 	}
 }
 

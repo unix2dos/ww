@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -91,6 +93,46 @@ func TestListWorktreesIgnoresStderrOnSuccess(t *testing.T) {
 	}
 	if got[0].Path != "/repo/worktrees/current" {
 		t.Fatalf("expected parsed stdout only, got %#v", got[0])
+	}
+}
+
+func TestListWorktreesAnnotatesCreationTimesWhenPathsExist(t *testing.T) {
+	root := t.TempDir()
+	current := filepath.Join(root, "current")
+	feature := filepath.Join(root, ".worktrees", "feat-a")
+	if err := os.MkdirAll(current, 0o755); err != nil {
+		t.Fatalf("mkdir current: %v", err)
+	}
+	if err := os.MkdirAll(feature, 0o755); err != nil {
+		t.Fatalf("mkdir feature: %v", err)
+	}
+
+	runner := fakeRunner{
+		outputs: map[string]string{
+			key("git", "rev-parse", "--show-toplevel"):                 current + "\n",
+			key("git", "-C", current, "rev-parse", "--git-common-dir"): filepath.Join(root, ".git") + "\n",
+			key("git", "-C", current, "worktree", "list", "--porcelain", "-z"): strings.Join([]string{
+				"worktree " + current,
+				"HEAD 1111111",
+				"branch refs/heads/main",
+				"",
+				"worktree " + feature,
+				"HEAD 2222222",
+				"branch refs/heads/feat-a",
+				"",
+			}, "\x00"),
+		},
+	}
+
+	_, got, err := ListWorktrees(context.Background(), runner)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got[0].CreatedAt == 0 {
+		t.Fatalf("expected current worktree creation time, got %#v", got[0])
+	}
+	if got[1].CreatedAt == 0 {
+		t.Fatalf("expected linked worktree creation time, got %#v", got[1])
 	}
 }
 

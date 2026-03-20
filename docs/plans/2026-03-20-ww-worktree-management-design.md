@@ -1,6 +1,6 @@
 # WW Worktree Management Design
 
-**Goal:** Make worktree discovery stable, add safe worktree cleanup, and add PR-style diff inspection without breaking the shell-first workflow.
+**Goal:** Make worktree discovery stable and add safe worktree cleanup without breaking the shell-first workflow.
 
 ## Product Decisions
 
@@ -11,8 +11,6 @@
 - Dirty worktrees are refused by default; `--force` only applies to worktree removal.
 - Branch deletion is attempted only when the branch is merged into the effective base branch.
 - The effective base branch defaults to the repository default branch at command execution time and can be overridden with `--base` for `ww rm`.
-- `ww diff` compares the current branch against a target branch using merge-base semantics.
-- `ww diff` defaults to summary output; `--patch` adds the full patch.
 
 ## Default Branch Resolution
 
@@ -21,7 +19,7 @@
 1. Resolve `refs/remotes/origin/HEAD` if present.
 2. Fall back to a local `main` branch if present.
 3. Fall back to a local `master` branch if present.
-4. If none of the above exist, return a descriptive error and ask the caller to specify `--base` or an explicit diff target.
+4. If none of the above exist, return a descriptive error and ask the caller to specify `--base`.
 
 This keeps the behavior aligned with hosted Git workflows without introducing new metadata files.
 
@@ -31,7 +29,7 @@ This keeps the behavior aligned with hosted Git workflows without introducing ne
 
 `internal/app/run.go` remains the command router. It will:
 
-- add `rm` and `diff` command entry points
+- add the `rm` command entry point
 - stop loading/touching MRU state for display ordering
 - route new confirmation and output formatting flows
 
@@ -43,7 +41,6 @@ New Git helpers will live under `internal/git` to keep shell commands out of the
 - branch cleanliness / merged checks
 - worktree removal
 - optional branch deletion
-- diff summary and patch generation
 
 ### UI Layer
 
@@ -51,19 +48,17 @@ New Git helpers will live under `internal/git` to keep shell commands out of the
 
 - stable `ACTIVE` status rendering in list, fallback menu, TUI, and fzf input
 - confirmation prompt helpers for `rm`
-- selection helpers for `diff` target picking
 
 ## Error Handling
 
 - Attempting to remove the current worktree is a user error.
 - Dirty worktrees without `--force` are rejected before any destructive action.
 - Unmerged branches are preserved, and the result explicitly states that only the worktree was removed.
-- `ww diff` surfaces a clear error when the default branch cannot be resolved and no target is specified.
 
 ## Testing Strategy
 
 - Update normalization tests to verify stable branch-name ordering and index assignment.
 - Update UI tests to verify `ACTIVE` replaces the current-worktree `*`.
-- Add Git unit tests for default branch resolution, removal safety checks, branch deletion decisions, and diff summary parsing.
-- Add app-layer tests for `ww rm` and `ww diff` argument handling and output.
-- Add e2e coverage for stable list ordering, safe removal, forced dirty removal, summary diff, and patch diff.
+- Add Git unit tests for default branch resolution and removal safety checks.
+- Add app-layer tests for `ww rm` argument handling and output.
+- Add e2e coverage for stable list ordering and safe removal.

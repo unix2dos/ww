@@ -400,7 +400,7 @@ func TestWwListPrintsOutputWithoutChangingDirectory(t *testing.T) {
 	}
 }
 
-func TestWwRmAndDiffPassThroughWithoutChangingDirectory(t *testing.T) {
+func TestWwRmPassThroughWithoutChangingDirectory(t *testing.T) {
 	home := t.TempDir()
 	rcPath := filepath.Join(home, ".zshrc")
 	if err := os.WriteFile(rcPath, []byte(""), 0o644); err != nil {
@@ -410,7 +410,7 @@ func TestWwRmAndDiffPassThroughWithoutChangingDirectory(t *testing.T) {
 	runInstall(t, home)
 
 	origin := t.TempDir()
-	script := "#!/usr/bin/env bash\ncase \"$1\" in\n  rm) printf 'removed worktree /repo/.worktrees/alpha\\n' ;;\n  diff) printf 'Current: feat\\nTarget: main\\n' ;;\n  *) exit 9 ;;\nesac\n"
+	script := "#!/usr/bin/env bash\ncase \"$1\" in\n  rm) printf 'removed worktree /repo/.worktrees/alpha\\n' ;;\n  *) exit 9 ;;\nesac\n"
 	if err := writeExecutableScript(filepath.Join(home, ".local", "bin", "ww-helper"), script); err != nil {
 		t.Fatalf("write fake ww-helper: %v", err)
 	}
@@ -419,15 +419,11 @@ func TestWwRmAndDiffPassThroughWithoutChangingDirectory(t *testing.T) {
 		cd %q
 		source %q
 		ww rm alpha
-		ww diff main
 		pwd
 	`, origin, rcPath))
 
 	if !strings.Contains(out, "removed worktree /repo/.worktrees/alpha") {
 		t.Fatalf("expected rm output, got %q", out)
-	}
-	if !strings.Contains(out, "Target: main") {
-		t.Fatalf("expected diff output, got %q", out)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if got := lines[len(lines)-1]; got != origin {

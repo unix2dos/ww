@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Implement stable worktree ordering, safe cleanup, and PR-style diff workflows for `ww`.
+**Goal:** Implement stable worktree ordering and safe cleanup workflows for `ww`.
 
 **Architecture:** Keep CLI routing in `internal/app`, put Git command orchestration in `internal/git`, and keep rendering/selection details inside `internal/ui`. Remove MRU from display semantics while preserving the existing shell-first command flow.
 
@@ -18,7 +18,7 @@
 
 **Step 1: Capture the approved design**
 
-Write the design decisions for ordering, `ACTIVE`, `ww rm`, `ww diff`, and default branch detection.
+Write the design decisions for ordering, `ACTIVE`, `ww rm`, and default branch detection.
 
 **Step 2: Save the execution plan**
 
@@ -61,22 +61,19 @@ Run:
 
 Expected: PASS
 
-### Task 3: Add Git primitives for default branch, removal, and diff
+### Task 3: Add Git primitives for default branch resolution and removal
 
 **Files:**
 - Create: `internal/git/default_branch.go`
 - Create: `internal/git/default_branch_test.go`
 - Create: `internal/git/remove.go`
 - Create: `internal/git/remove_test.go`
-- Create: `internal/git/diff.go`
-- Create: `internal/git/diff_test.go`
 
 **Step 1: Write failing tests**
 
 Add tests for:
 - default branch resolution via `origin/HEAD`, then `main`, then `master`
 - safe worktree removal decisions and branch deletion behavior
-- merge-base diff summary and patch command construction
 
 **Step 2: Run targeted tests to verify failure**
 
@@ -87,7 +84,7 @@ Expected: failures for missing files and commands.
 
 **Step 3: Write the minimal implementation**
 
-Implement helpers for default branch lookup, worktree inspection/removal, and diff summary generation.
+Implement helpers for default branch lookup and worktree inspection/removal.
 
 **Step 4: Run targeted tests to verify pass**
 
@@ -96,7 +93,7 @@ Run:
 
 Expected: PASS
 
-### Task 4: Add `ww rm` and `ww diff` command handling
+### Task 4: Add `ww rm` command handling
 
 **Files:**
 - Modify: `internal/app/run.go`
@@ -107,7 +104,6 @@ Expected: PASS
 
 Add app tests for:
 - `ww rm` candidate listing, confirmation, `--force`, `--base`, and result text / JSON
-- `ww diff` default target selection, explicit target selection, summary output, and `--patch`
 
 **Step 2: Run targeted tests to verify failure**
 
@@ -141,7 +137,6 @@ Expected: PASS
 Extend e2e coverage for:
 - stable ordering after switch/new
 - `ww rm` removal rules
-- `ww diff` summary and patch behavior
 
 **Step 2: Run targeted tests to verify failure**
 
@@ -175,4 +170,4 @@ Expected: PASS
 
 **Step 2: Review the diff against the requirements**
 
-Check that ordering, `ACTIVE`, `ww rm`, `ww diff`, help text, and README all match the approved Definition of Done.
+Check that ordering, `ACTIVE`, `ww rm`, help text, and README all match the approved Definition of Done.

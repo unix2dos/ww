@@ -23,7 +23,7 @@ if [[ ! -x "$ASCIINEMA_BIN" ]]; then
   cargo install --locked --root "$TOOLS_DIR" asciinema --version 3.2.0
 fi
 
-go build -o "$HELPER_BIN" ./cmd/ww-helper
+go build -buildvcs=false -o "$HELPER_BIN" ./cmd/ww-helper
 
 TMP_DIR="/tmp/ww-demo-site"
 cleanup() {

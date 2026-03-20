@@ -13,6 +13,16 @@ func Normalize(items []Worktree) []Worktree {
 	copy(out, items)
 
 	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt != out[j].CreatedAt {
+			switch {
+			case out[i].CreatedAt == 0:
+				return false
+			case out[j].CreatedAt == 0:
+				return true
+			default:
+				return out[i].CreatedAt < out[j].CreatedAt
+			}
+		}
 		if out[i].BranchLabel != out[j].BranchLabel {
 			return out[i].BranchLabel < out[j].BranchLabel
 		}

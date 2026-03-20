@@ -175,7 +175,7 @@ install_artifacts() {
     chmod +x "$helper_path"
   else
     cd "$REPO_ROOT"
-    go build -o "$helper_path" ./cmd/ww-helper
+    go build -buildvcs=false -o "$helper_path" ./cmd/ww-helper
   fi
   cp "$REPO_ROOT/shell/ww.sh" "$shell_path"
   chmod +x "$shell_path"

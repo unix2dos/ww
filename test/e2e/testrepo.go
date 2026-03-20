@@ -55,7 +55,7 @@ func buildCLI(t *testing.T) string {
 	t.Helper()
 
 	bin := filepath.Join(t.TempDir(), "ww-helper")
-	run := exec.Command("go", "build", "-o", bin, "./cmd/ww-helper")
+	run := exec.Command("go", "build", "-buildvcs=false", "-o", bin, "./cmd/ww-helper")
 	run.Dir = projectRoot(t)
 	if out, err := run.CombinedOutput(); err != nil {
 		t.Fatalf("build cli: %v\n%s", err, out)

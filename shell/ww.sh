@@ -19,7 +19,7 @@ ww() {
       "$ww_helper_bin" list "$@"
       return $?
       ;;
-    rm|diff)
+    rm)
       "$ww_helper_bin" "$@"
       return $?
       ;;

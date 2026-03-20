@@ -45,6 +45,30 @@ func TestSelectWorktreeWithFzfReturnsSelectedWorktree(t *testing.T) {
 	if !strings.Contains(strings.Join(runner.gotArgs, " "), "--pointer=*") {
 		t.Fatalf("expected fzf pointer marker to follow active selection, args=%q", runner.gotArgs)
 	}
+	if !strings.Contains(strings.Join(runner.gotArgs, " "), "--tac") {
+		t.Fatalf("expected fzf to keep the list near the prompt while rendering top-down, args=%q", runner.gotArgs)
+	}
+	if !strings.Contains(strings.Join(runner.gotArgs, " "), "--bind=load:pos(2)") {
+		t.Fatalf("expected fzf to focus current worktree by default, args=%q", runner.gotArgs)
+	}
+}
+
+func TestSelectWorktreeWithFzfFocusesCurrentWorktreeByDefault(t *testing.T) {
+	runner := &fakeFzfRunner{
+		lookPath: "/usr/bin/fzf",
+		stdout:   []byte("2\tACTIVE\tmain\t/repo\n"),
+	}
+
+	_, err := SelectWorktreeWithFzf(context.Background(), []worktree.Worktree{
+		{Index: 1, BranchLabel: "alpha", Path: "/repo/.worktrees/alpha"},
+		{Index: 2, BranchLabel: "main", Path: "/repo", IsCurrent: true},
+	}, runner)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(strings.Join(runner.gotArgs, " "), "--bind=load:pos(1)") {
+		t.Fatalf("expected fzf to position cursor on current worktree, args=%q", runner.gotArgs)
+	}
 }
 
 func TestSelectWorktreeWithFzfReturnsErrFzfNotInstalled(t *testing.T) {

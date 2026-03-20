@@ -51,6 +51,7 @@ func ListWorktrees(ctx context.Context, runner Runner) (string, []worktree.Workt
 	for i := range items {
 		items[i].IsCurrent = filepath.Clean(items[i].Path) == filepath.Clean(currentPath)
 	}
+	annotateCreationTimes(items)
 
 	return repoKey, items, nil
 }

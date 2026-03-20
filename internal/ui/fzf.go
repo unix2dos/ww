@@ -47,9 +47,11 @@ func SelectWorktreeWithFzf(ctx context.Context, items []worktree.Worktree, runne
 	input := formatFzfCandidates(items)
 	stdout, _, err := runner.Run(ctx, "fzf", input,
 		"--no-sort",
+		"--tac",
 		"--delimiter=\t",
 		"--nth=2..",
 		"--pointer=*",
+		fmt.Sprintf("--bind=load:pos(%d)", initialFzfPosition(items)),
 		"--prompt=Select a worktree> ",
 	)
 	if err != nil {
@@ -91,6 +93,15 @@ func fzfStatus(item worktree.Worktree) string {
 		return "ACTIVE"
 	}
 	return ""
+}
+
+func initialFzfPosition(items []worktree.Worktree) int {
+	for i, item := range items {
+		if item.IsCurrent {
+			return len(items) - i
+		}
+	}
+	return 1
 }
 
 func parseFzfSelection(selection string) (int, error) {

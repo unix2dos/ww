@@ -105,7 +105,6 @@ If you installed into Bash, reload `~/.bashrc` instead.
 - `ww list` prints worktrees without changing directory.
 - `ww new <name>` creates a new worktree under `./.worktrees/<name>` and switches into it.
 - `ww rm [<name>]` removes a worktree and deletes its branch only when that branch is already merged into the effective base branch.
-- `ww diff [<name>]` shows a PR-style diff summary for the current branch against another branch, with `--patch` for the full patch.
 - `ww` uses `fzf` automatically when available and falls back to the built-in arrow-key selector otherwise.
 
 ### Interactive Pick
@@ -117,13 +116,13 @@ ww
 Without `fzf`, this opens the built-in selector like:
 
 ```text
-  [1]        feat-a /path/to/repo/.worktrees/feat-a
-* [2] ACTIVE main /path/to/repo
+* [1] ACTIVE main /path/to/repo
+  [2]        feat-a /path/to/repo/.worktrees/feat-a
 
 Use Up/Down (or j/k). Enter to confirm. Esc/Ctrl-C to cancel.
 ```
 
-Move with arrow keys and press Enter to switch. The active shell worktree stays in alphabetical position and is labeled `ACTIVE`.
+Move with arrow keys and press Enter to switch. The active shell worktree is labeled `ACTIVE`, and the selector starts on it by default.
 
 ### Direct Index Or Name
 
@@ -141,9 +140,9 @@ Exact name matches win. If no exact match exists, `ww` falls back to a unique pr
 ww list
 ```
 
-This prints the current worktree table in stable alphabetical order without changing your shell directory.
+This prints the current worktree table without changing your shell directory.
 
-Worktrees are shown in stable alphabetical order by branch name. The current one is labeled `ACTIVE`.
+Worktrees are shown from oldest to newest by worktree creation time. Smaller indices refer to older worktrees, and the current one is labeled `ACTIVE`.
 
 ### New
 
@@ -164,16 +163,6 @@ ww rm --base release/1.0 feat-a
 
 `ww rm` lists removable worktrees, shows whether each one is dirty or merged, asks for confirmation, removes the worktree, and only deletes the branch when it is already merged into the effective base branch.
 
-### Diff
-
-```bash
-ww diff
-ww diff main
-ww diff --patch main
-```
-
-`ww diff` compares the current branch against the target branch using merge-base semantics. By default it prints a summary with ahead/behind counts, commits, and changed files. `--patch` appends the full patch.
-
 ### Typical Flow
 
 ```bash
@@ -182,7 +171,6 @@ ww
 ww switch feat-a
 ww list
 ww new feat-b
-ww diff main
 ww rm feat-a
 ```
 
@@ -203,7 +191,6 @@ ww 1
 ww switch feat-a
 ww list
 ww new feat-b
-ww diff main
 ww rm feat-a
 ```
 
