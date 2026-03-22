@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"ww/internal/git"
 	"ww/internal/state"
@@ -25,7 +26,9 @@ type Deps interface {
 	SelectWorktreeWithTUI(in io.Reader, out io.Writer, items []worktree.Worktree) (worktree.Worktree, error)
 	CreateWorktree(ctx context.Context, name string) (string, error)
 	LoadWorktreeState(ctx context.Context, repoKey string) (map[string]int64, error)
+	LoadWorktreeMetadata(ctx context.Context, repoKey string) (map[string]state.WorktreeMetadata, error)
 	TouchWorktreeState(ctx context.Context, repoKey, path string) error
+	RecordWorktreeState(ctx context.Context, repoKey, path string, meta state.WorktreeMetadata) error
 	DefaultBranch(ctx context.Context) (string, error)
 	PreviewRemoval(ctx context.Context, item worktree.Worktree, baseBranch string) (git.RemovalPreview, error)
 	RemoveWorktree(ctx context.Context, item worktree.Worktree, opts git.RemoveOptions) (git.RemoveResult, error)
@@ -84,12 +87,28 @@ func (d RealDeps) LoadWorktreeState(_ context.Context, repoKey string) (map[stri
 	return store.Load(repoKey)
 }
 
+func (d RealDeps) LoadWorktreeMetadata(_ context.Context, repoKey string) (map[string]state.WorktreeMetadata, error) {
+	store, err := ensureStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.LoadMetadata(repoKey)
+}
+
 func (d RealDeps) TouchWorktreeState(_ context.Context, repoKey, path string) error {
 	store, err := ensureStore()
 	if err != nil {
 		return err
 	}
 	return store.Touch(repoKey, path)
+}
+
+func (d RealDeps) RecordWorktreeState(_ context.Context, repoKey, path string, meta state.WorktreeMetadata) error {
+	store, err := ensureStore()
+	if err != nil {
+		return err
+	}
+	return store.RecordWorktree(repoKey, path, meta)
 }
 
 func (d RealDeps) DefaultBranch(ctx context.Context) (string, error) {
@@ -137,7 +156,7 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 			return 2
 		}
 
-		repoKey, items, warn, err := orderedWorktrees(ctx, deps)
+		repoKey, items, _, warn, err := orderedWorktrees(ctx, deps)
 		if err != nil {
 			return writeWorktreeError(errOut, err)
 		}
@@ -163,7 +182,7 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 	}
 
 	if len(args) == 0 {
-		repoKey, items, warn, err := orderedWorktrees(ctx, deps)
+		repoKey, items, _, warn, err := orderedWorktrees(ctx, deps)
 		if err != nil {
 			return writeWorktreeError(errOut, err)
 		}
@@ -183,7 +202,7 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 		return 2
 	}
 
-	repoKey, items, warn, err := orderedWorktrees(ctx, deps)
+	repoKey, items, _, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
 		return writeWorktreeError(errOut, err)
 	}
@@ -218,7 +237,20 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 }
 
 type listConfig struct {
-	json bool
+	json    bool
+	verbose bool
+	filters []listFilter
+}
+
+type listEntry struct {
+	item worktree.Worktree
+	meta state.WorktreeMetadata
+}
+
+type listFilter struct {
+	kind     string
+	value    string
+	duration state.DurationSpec
 }
 
 func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer, deps Deps) int {
@@ -227,14 +259,19 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 		return writeCommandError("list", out, errOut, cfg.json, err)
 	}
 
-	_, items, warn, err := orderedWorktrees(ctx, deps)
+	_, items, metadata, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
 		return writeCommandError("list", out, errOut, cfg.json, err)
 	}
 	if !cfg.json {
 		warnStateIssue(errOut, warn)
 	}
-	if len(items) == 0 {
+
+	entries, err := filterListEntries(decorateListEntries(items, metadata), cfg.filters, time.Now())
+	if err != nil {
+		return writeCommandError("list", out, errOut, cfg.json, err)
+	}
+	if len(entries) == 0 {
 		if cfg.json {
 			return writeJSONSuccess(out, "list", []any{})
 		}
@@ -246,28 +283,47 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 	}
 
 	if cfg.json {
-		payload := make([]map[string]any, 0, len(items))
-		for _, item := range items {
+		payload := make([]map[string]any, 0, len(entries))
+		for _, entry := range entries {
+			item := entry.item
 			payload = append(payload, map[string]any{
-				"path":       item.Path,
-				"branch":     item.BranchLabel,
-				"dirty":      item.IsDirty,
-				"active":     item.IsCurrent,
-				"created_at": item.CreatedAt,
+				"path":         item.Path,
+				"branch":       item.BranchLabel,
+				"dirty":        item.IsDirty,
+				"active":       item.IsCurrent,
+				"created_at":   item.CreatedAt,
+				"last_used_at": entry.meta.LastUsedAt,
+				"label":        entry.meta.Label,
+				"ttl":          entry.meta.TTL,
 			})
 		}
 		return writeJSONSuccess(out, "list", payload)
 	}
 
-	for _, item := range items {
-		fmt.Fprintf(out, "[%d] %-6s %s %s\n", item.Index, ui.StatusLabel(item), item.BranchLabel, item.Path)
+	for _, entry := range entries {
+		item := entry.item
+		fmt.Fprintf(out, "[%d] %-6s %s %s", item.Index, ui.StatusLabel(item), item.BranchLabel, item.Path)
+		if cfg.verbose {
+			if entry.meta.Label != "" {
+				fmt.Fprintf(out, " label=%s", entry.meta.Label)
+			}
+			if entry.meta.TTL != "" {
+				fmt.Fprintf(out, " ttl=%s", entry.meta.TTL)
+			}
+			if entry.meta.LastUsedAt != 0 {
+				fmt.Fprintf(out, " last_used_at=%d", entry.meta.LastUsedAt)
+			}
+		}
+		fmt.Fprintln(out)
 	}
 	return 0
 }
 
 type newPathConfig struct {
-	json bool
-	name string
+	json  bool
+	name  string
+	label string
+	ttl   string
 }
 
 func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Writer, deps Deps) int {
@@ -286,7 +342,16 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 		return writeCommandError("new-path", out, errOut, cfg.json, err)
 	}
 
+	meta := state.WorktreeMetadata{
+		CreatedAt: time.Now().UnixNano(),
+		Label:     cfg.label,
+		TTL:       cfg.ttl,
+	}
+
 	if cfg.json {
+		if err := recordWorktreeStateBestEffort(ctx, deps, repoKey, path, meta); err != nil {
+			return writeCommandError("new-path", out, errOut, cfg.json, err)
+		}
 		if err := touchWorktreeStateBestEffort(ctx, deps, repoKey, path); err != nil {
 			return writeCommandError("new-path", out, errOut, cfg.json, err)
 		}
@@ -297,6 +362,7 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 	}
 
 	fmt.Fprintln(out, path)
+	warnStateIssue(errOut, recordWorktreeStateBestEffort(ctx, deps, repoKey, path, meta))
 	warnStateIssue(errOut, touchWorktreeStateBestEffort(ctx, deps, repoKey, path))
 	return 0
 }
@@ -328,7 +394,7 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
 
-	_, items, warn, err := orderedWorktrees(ctx, deps)
+	_, items, _, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
 		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
@@ -413,20 +479,24 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 	return 0
 }
 
-func orderedWorktrees(ctx context.Context, deps Deps) (string, []worktree.Worktree, error, error) {
+func orderedWorktrees(ctx context.Context, deps Deps) (string, []worktree.Worktree, map[string]state.WorktreeMetadata, error, error) {
 	repoKey, items, err := deps.ListWorktrees(ctx)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
-	mru, err := deps.LoadWorktreeState(ctx, repoKey)
+	metadata, err := deps.LoadWorktreeMetadata(ctx, repoKey)
 	if err != nil {
 		normalized := worktree.Normalize(items)
-		return repoKey, normalized, fmt.Errorf("state load unavailable: %w", err), nil
+		return repoKey, normalized, map[string]state.WorktreeMetadata{}, fmt.Errorf("state load unavailable: %w", err), nil
 	}
 	for i := range items {
-		items[i].LastUsedAt = mru[items[i].Path]
+		meta := metadata[items[i].Path]
+		items[i].LastUsedAt = meta.LastUsedAt
+		if meta.CreatedAt != 0 {
+			items[i].CreatedAt = meta.CreatedAt
+		}
 	}
-	return repoKey, worktree.Normalize(items), nil, nil
+	return repoKey, worktree.Normalize(items), metadata, nil, nil
 }
 
 func parseRemoveArgs(args []string) (removeConfig, error) {
@@ -472,14 +542,32 @@ func filterNonCurrent(items []worktree.Worktree) []worktree.Worktree {
 
 func parseListArgs(args []string) (listConfig, error) {
 	var cfg listConfig
-	for _, arg := range args {
-		switch {
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
 		case arg == "--json":
 			cfg.json = true
+		case arg == "--verbose":
+			cfg.verbose = true
+		case arg == "--filter":
+			if i+1 >= len(args) {
+				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --filter", ExitCode: 2}
+			}
+			i++
+			filter, err := parseListFilter(args[i])
+			if err != nil {
+				return cfg, err
+			}
+			cfg.filters = append(cfg.filters, filter)
+		case strings.HasPrefix(arg, "--filter="):
+			filter, err := parseListFilter(strings.TrimPrefix(arg, "--filter="))
+			if err != nil {
+				return cfg, err
+			}
+			cfg.filters = append(cfg.filters, filter)
 		case strings.HasPrefix(arg, "-"):
 			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
 		default:
-			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args, " ")), ExitCode: 2}
+			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
 		}
 	}
 	return cfg, nil
@@ -491,6 +579,36 @@ func parseNewPathArgs(args []string) (newPathConfig, error) {
 		switch arg := args[i]; {
 		case arg == "--json":
 			cfg.json = true
+		case arg == "--label":
+			if i+1 >= len(args) {
+				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --label", ExitCode: 2}
+			}
+			i++
+			cfg.label = strings.TrimSpace(args[i])
+			if cfg.label == "" {
+				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "label cannot be empty", ExitCode: 2}
+			}
+		case strings.HasPrefix(arg, "--label="):
+			cfg.label = strings.TrimSpace(strings.TrimPrefix(arg, "--label="))
+			if cfg.label == "" {
+				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "label cannot be empty", ExitCode: 2}
+			}
+		case arg == "--ttl":
+			if i+1 >= len(args) {
+				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --ttl", ExitCode: 2}
+			}
+			i++
+			spec, err := state.ParseHumanDuration(args[i])
+			if err != nil {
+				return cfg, appError{Code: "INVALID_DURATION", Message: err.Error(), ExitCode: 2}
+			}
+			cfg.ttl = spec.String()
+		case strings.HasPrefix(arg, "--ttl="):
+			spec, err := state.ParseHumanDuration(strings.TrimPrefix(arg, "--ttl="))
+			if err != nil {
+				return cfg, appError{Code: "INVALID_DURATION", Message: err.Error(), ExitCode: 2}
+			}
+			cfg.ttl = spec.String()
 		case strings.HasPrefix(arg, "-"):
 			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
 		default:
@@ -504,6 +622,92 @@ func parseNewPathArgs(args []string) (newPathConfig, error) {
 		return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing worktree name", ExitCode: 2}
 	}
 	return cfg, nil
+}
+
+func parseListFilter(expr string) (listFilter, error) {
+	switch {
+	case expr == "dirty":
+		return listFilter{kind: "dirty"}, nil
+	case strings.HasPrefix(expr, "label="):
+		value := strings.TrimPrefix(expr, "label=")
+		if strings.TrimSpace(value) == "" {
+			return listFilter{}, appError{Code: "INVALID_FILTER", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
+		}
+		return listFilter{kind: "label_eq", value: value}, nil
+	case strings.HasPrefix(expr, "label~"):
+		value := strings.TrimPrefix(expr, "label~")
+		if strings.TrimSpace(value) == "" {
+			return listFilter{}, appError{Code: "INVALID_FILTER", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
+		}
+		return listFilter{kind: "label_contains", value: value}, nil
+	case strings.HasPrefix(expr, "stale="):
+		spec, err := state.ParseHumanDuration(strings.TrimPrefix(expr, "stale="))
+		if err != nil {
+			return listFilter{}, appError{Code: "INVALID_FILTER", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
+		}
+		return listFilter{kind: "stale", duration: spec}, nil
+	default:
+		return listFilter{}, appError{Code: "INVALID_FILTER", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
+	}
+}
+
+func decorateListEntries(items []worktree.Worktree, metadata map[string]state.WorktreeMetadata) []listEntry {
+	entries := make([]listEntry, 0, len(items))
+	for _, item := range items {
+		meta := metadata[item.Path]
+		if meta.CreatedAt == 0 {
+			meta.CreatedAt = item.CreatedAt
+		}
+		if meta.LastUsedAt == 0 {
+			meta.LastUsedAt = item.LastUsedAt
+		}
+		entries = append(entries, listEntry{item: item, meta: meta})
+	}
+	return entries
+}
+
+func filterListEntries(entries []listEntry, filters []listFilter, now time.Time) ([]listEntry, error) {
+	if len(filters) == 0 {
+		return entries, nil
+	}
+
+	filtered := make([]listEntry, 0, len(entries))
+	for _, entry := range entries {
+		if matchesAllListFilters(entry, filters, now) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered, nil
+}
+
+func matchesAllListFilters(entry listEntry, filters []listFilter, now time.Time) bool {
+	for _, filter := range filters {
+		switch filter.kind {
+		case "dirty":
+			if !entry.item.IsDirty {
+				return false
+			}
+		case "label_eq":
+			if entry.meta.Label != filter.value {
+				return false
+			}
+		case "label_contains":
+			if !strings.Contains(entry.meta.Label, filter.value) {
+				return false
+			}
+		case "stale":
+			if entry.meta.LastUsedAt == 0 {
+				return false
+			}
+			lastUsedAt := time.Unix(0, entry.meta.LastUsedAt)
+			if now.Sub(lastUsedAt) < filter.duration.Value {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func selectRemovalCandidateNonInteractive(allItems []worktree.Worktree, candidates []removalCandidate, target string) (removalCandidate, error) {
@@ -941,6 +1145,13 @@ func writeSelectionError(errOut io.Writer, err error) int {
 
 func touchWorktreeStateBestEffort(ctx context.Context, deps Deps, repoKey, path string) error {
 	if err := deps.TouchWorktreeState(ctx, repoKey, path); err != nil {
+		return fmt.Errorf("state update skipped: %w", err)
+	}
+	return nil
+}
+
+func recordWorktreeStateBestEffort(ctx context.Context, deps Deps, repoKey, path string, meta state.WorktreeMetadata) error {
+	if err := deps.RecordWorktreeState(ctx, repoKey, path, meta); err != nil {
 		return fmt.Errorf("state update skipped: %w", err)
 	}
 	return nil

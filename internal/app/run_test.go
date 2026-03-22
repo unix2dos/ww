@@ -8,8 +8,10 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"ww/internal/git"
+	"ww/internal/state"
 	"ww/internal/ui"
 	"ww/internal/worktree"
 )
@@ -446,6 +448,80 @@ func TestRunNewPathOutputsJSONWhenRequested(t *testing.T) {
 	}
 }
 
+func TestRunNewPathJSONIncludesMetadataInputs(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	recorded := &recordWorktreeCall{}
+	deps := fakeDeps{
+		createPath: "/repo/.worktrees/alpha",
+		repoKey:    "/repo/.git",
+		touched:    &touchRecord{},
+		recorded:   recorded,
+	}
+
+	code := Run(context.Background(), []string{"new-path", "--json", "--label", "agent:claude", "--ttl", "24h", "alpha"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+	if recorded.repoKey != "/repo/.git" || recorded.path != "/repo/.worktrees/alpha" {
+		t.Fatalf("expected metadata record call, got %#v", recorded)
+	}
+	if recorded.meta.Label != "agent:claude" || recorded.meta.TTL != "24h" || recorded.meta.CreatedAt == 0 {
+		t.Fatalf("unexpected recorded metadata: %#v", recorded.meta)
+	}
+}
+
+func TestRunNewPathRejectsInvalidTTL(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"new-path", "--json", "--ttl", "later", "alpha"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if envelope.OK {
+		t.Fatalf("expected error envelope, got %#v", envelope)
+	}
+	if envelope.Error == nil || envelope.Error.Code != "INVALID_DURATION" {
+		t.Fatalf("unexpected error payload: %#v", envelope.Error)
+	}
+}
+
+func TestRunNewPathRejectsEmptyLabel(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"new-path", "--json", "--label", "", "alpha"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if envelope.OK {
+		t.Fatalf("expected error envelope, got %#v", envelope)
+	}
+	if envelope.Error == nil || envelope.Error.Code != "INVALID_ARGUMENTS" {
+		t.Fatalf("unexpected error payload: %#v", envelope.Error)
+	}
+	if !strings.Contains(envelope.Error.Message, "label") {
+		t.Fatalf("expected label validation message, got %#v", envelope.Error)
+	}
+}
+
 func TestRunNewPathOutputsJSONErrorWhenMissingName(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -471,6 +547,150 @@ func TestRunNewPathOutputsJSONErrorWhenMissingName(t *testing.T) {
 	}
 	if !strings.Contains(envelope.Error.Message, "missing worktree name") {
 		t.Fatalf("expected missing-name message, got %#v", envelope.Error)
+	}
+}
+
+func TestRunListJSONIncludesMetadataFields(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", CreatedAt: 20},
+		},
+		metadata: map[string]map[string]state.WorktreeMetadata{
+			"/repo/.git": {
+				"/repo/.worktrees/alpha": {
+					LastUsedAt: 30,
+					CreatedAt:  20,
+					Label:      "agent:claude",
+					TTL:        "24h",
+				},
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"list", "--json"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	var items []struct {
+		Path       string `json:"path"`
+		LastUsedAt int64  `json:"last_used_at"`
+		Label      string `json:"label"`
+		TTL        string `json:"ttl"`
+	}
+	decodeEnvelopeData(t, envelope, &items)
+
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %#v", items)
+	}
+	if items[0].Path != "/repo/.worktrees/alpha" || items[0].LastUsedAt != 30 || items[0].Label != "agent:claude" || items[0].TTL != "24h" {
+		t.Fatalf("unexpected metadata payload: %#v", items[0])
+	}
+}
+
+func TestRunListVerboseShowsLabelAndTTL(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", CreatedAt: 20},
+		},
+		metadata: map[string]map[string]state.WorktreeMetadata{
+			"/repo/.git": {
+				"/repo/.worktrees/alpha": {
+					LastUsedAt: time.Unix(200, 0).UnixNano(),
+					CreatedAt:  20,
+					Label:      "agent:claude",
+					TTL:        "24h",
+				},
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"list", "--verbose"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "agent:claude") || !strings.Contains(stdout.String(), "24h") {
+		t.Fatalf("expected verbose output to include metadata, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunListFiltersByLabelAndStale(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", CreatedAt: 20},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", CreatedAt: 30},
+		},
+		metadata: map[string]map[string]state.WorktreeMetadata{
+			"/repo/.git": {
+				"/repo/.worktrees/alpha": {
+					LastUsedAt: 1,
+					CreatedAt:  20,
+					Label:      "agent:claude",
+					TTL:        "24h",
+				},
+				"/repo/.worktrees/beta": {
+					LastUsedAt: time.Now().UnixNano(),
+					CreatedAt:  30,
+					Label:      "manual",
+				},
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"list", "--json", "--filter", "label=agent:claude", "--filter", "stale=7d"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	var items []struct {
+		Path string `json:"path"`
+	}
+	decodeEnvelopeData(t, envelope, &items)
+
+	if len(items) != 1 || items[0].Path != "/repo/.worktrees/alpha" {
+		t.Fatalf("expected only alpha to match, got %#v", items)
+	}
+}
+
+func TestRunListRejectsInvalidFilter(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"list", "--json", "--filter", "branch=alpha"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if envelope.OK {
+		t.Fatalf("expected error envelope, got %#v", envelope)
+	}
+	if envelope.Error == nil || envelope.Error.Code != "INVALID_FILTER" {
+		t.Fatalf("unexpected error payload: %#v", envelope.Error)
 	}
 }
 
@@ -1333,7 +1553,9 @@ type fakeDeps struct {
 	loadErr          error
 	touchErr         error
 	state            map[string]map[string]int64
+	metadata         map[string]map[string]state.WorktreeMetadata
 	touched          *touchRecord
+	recorded         *recordWorktreeCall
 	defaultBranch    string
 	defaultBranchErr error
 	previews         map[string]git.RemovalPreview
@@ -1346,6 +1568,12 @@ type fakeDeps struct {
 type touchRecord struct {
 	repoKey string
 	path    string
+}
+
+type recordWorktreeCall struct {
+	repoKey string
+	path    string
+	meta    state.WorktreeMetadata
 }
 
 type removeCall struct {
@@ -1425,6 +1653,13 @@ func (f fakeDeps) LoadWorktreeState(_ context.Context, repoKey string) (map[stri
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
+	if got, ok := f.metadata[repoKey]; ok {
+		out := make(map[string]int64, len(got))
+		for path, meta := range got {
+			out[path] = meta.LastUsedAt
+		}
+		return out, nil
+	}
 	if f.state == nil {
 		return map[string]int64{}, nil
 	}
@@ -1445,6 +1680,39 @@ func (f fakeDeps) TouchWorktreeState(_ context.Context, repoKey, path string) er
 	if f.touched != nil {
 		f.touched.repoKey = repoKey
 		f.touched.path = path
+	}
+	return nil
+}
+
+func (f fakeDeps) LoadWorktreeMetadata(_ context.Context, repoKey string) (map[string]state.WorktreeMetadata, error) {
+	if f.loadErr != nil {
+		return nil, f.loadErr
+	}
+	if got, ok := f.metadata[repoKey]; ok {
+		out := make(map[string]state.WorktreeMetadata, len(got))
+		for path, meta := range got {
+			out[path] = meta
+		}
+		return out, nil
+	}
+	if got, ok := f.state[repoKey]; ok {
+		out := make(map[string]state.WorktreeMetadata, len(got))
+		for path, lastUsedAt := range got {
+			out[path] = state.WorktreeMetadata{LastUsedAt: lastUsedAt}
+		}
+		return out, nil
+	}
+	return map[string]state.WorktreeMetadata{}, nil
+}
+
+func (f fakeDeps) RecordWorktreeState(_ context.Context, repoKey, path string, meta state.WorktreeMetadata) error {
+	if f.touchErr != nil {
+		return f.touchErr
+	}
+	if f.recorded != nil {
+		f.recorded.repoKey = repoKey
+		f.recorded.path = path
+		f.recorded.meta = meta
 	}
 	return nil
 }
