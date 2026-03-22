@@ -86,6 +86,75 @@ If you installed into Bash, reload `~/.bashrc` instead.
 - `ww help` or `ww --help` prints the command summary.
 - `ww` uses `fzf` automatically when available and falls back to the built-in arrow-key selector otherwise.
 
+### For AI Agents
+
+Use `ww-helper` for machine-readable workflows. `ww` remains the human shell entrypoint and still treats `switch` / `new` as directory-changing commands.
+
+Phase 1 programmatic commands:
+
+```bash
+ww-helper list --json
+ww-helper new-path --json feat-a
+ww-helper rm --json --non-interactive feat-a
+```
+
+`ww-helper switch-path` remains a path-printing helper. Phase 1 does not add a new `switch --json` contract; agents should call `switch-path` directly when they need a target path.
+
+#### JSON Envelope
+
+Successful `--json` responses use:
+
+```json
+{
+  "ok": true,
+  "command": "list",
+  "data": { ... }
+}
+```
+
+Error responses use:
+
+```json
+{
+  "ok": false,
+  "command": "rm",
+  "error": {
+    "code": "WORKTREE_DIRTY",
+    "message": "worktree has uncommitted changes; rerun with --force",
+    "exit_code": 1
+  }
+}
+```
+
+#### `ww-helper list --json`
+
+Returns an array of worktrees with:
+
+- `path`
+- `branch`
+- `dirty`
+- `active`
+- `created_at`
+
+#### `ww-helper new-path --json <name>`
+
+Returns:
+
+- `worktree_path`
+- `branch`
+
+#### `ww-helper rm --json --non-interactive <target>`
+
+Removes the target without prompting, while still enforcing the normal safety rules:
+
+- dirty worktrees still require `--force`
+- the active worktree cannot be removed
+- if you omit `<target>` and more than one removable worktree exists, the command returns `AMBIGUOUS_MATCH`
+
+#### Breaking Change
+
+`ww-helper rm --json` used to return a flat JSON object. It now returns the same JSON envelope format as the other Phase 1 machine-readable commands.
+
 ### Interactive Pick
 
 ```bash
@@ -169,6 +238,8 @@ ww rm feat-a
 - `2`: invalid user input such as a bad index, bad name match, or extra args
 - `3`: environment problem such as not being in a Git repo
 - `130`: interactive selection canceled
+
+For `ww-helper ... --json`, the envelope `error.exit_code` matches the process exit code.
 
 ## Smoke Test Matrix
 

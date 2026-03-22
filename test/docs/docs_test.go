@@ -26,6 +26,12 @@ func TestPagesDemoContract(t *testing.T) {
 	if !strings.Contains(readme, "docs/reference.md") {
 		t.Fatalf("expected README to hand off detailed docs to docs/reference.md")
 	}
+	if !strings.Contains(readme, "## For AI Agents") {
+		t.Fatalf("expected README to document the machine-readable entrypoint")
+	}
+	if !strings.Contains(readme, "ww-helper list --json") {
+		t.Fatalf("expected README to show ww-helper json usage")
+	}
 	if strings.Contains(readme, "### Install From Source") {
 		t.Fatalf("expected README to stay in landing-page mode, not inline the full reference")
 	}
@@ -37,6 +43,9 @@ func TestPagesDemoContract(t *testing.T) {
 		"## Usage",
 		"## Release",
 		"`ww help` or `ww --help` prints the command summary.",
+		"### For AI Agents",
+		"ww-helper rm --json --non-interactive feat-a",
+		"#### Breaking Change",
 	} {
 		if !strings.Contains(reference, snippet) {
 			t.Fatalf("expected reference doc to contain %q", snippet)

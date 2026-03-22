@@ -41,6 +41,20 @@ ww rm feat-demo
 
 For the fastest path, install `fzf`. If `fzf` is not available, `ww` automatically falls back to the built-in selector, so the workflow still works without extra setup.
 
+## For AI Agents
+
+Use `ww-helper` for programmatic calls. `ww` stays shell-first for humans and still changes your current shell directory for `switch` and `new`.
+
+Phase 1 machine-readable commands:
+
+```bash
+ww-helper list --json
+ww-helper new-path --json feat-demo
+ww-helper rm --json --non-interactive feat-demo
+```
+
+`ww-helper rm --json` now returns a JSON envelope with `ok`, `command`, and `data`/`error`. This is a breaking change from the older flat JSON object.
+
 ## Reference
 
 `README.md` is the landing page. Detailed install, usage, release, and command reference now live in:

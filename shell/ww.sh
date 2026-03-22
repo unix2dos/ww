@@ -27,6 +27,16 @@ Examples:
 EOF
 }
 
+ww_has_json_flag() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = "--json" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 ww() {
   local ww_helper_bin="${WW_HELPER_BIN:-ww-helper}"
   local target
@@ -37,10 +47,18 @@ ww() {
       ;;
     switch)
       shift
+      if ww_has_json_flag "$@"; then
+        "$ww_helper_bin" switch-path "$@"
+        return $?
+      fi
       target="$("$ww_helper_bin" switch-path "$@")" || return $?
       ;;
     new)
       shift
+      if ww_has_json_flag "$@"; then
+        "$ww_helper_bin" new-path "$@"
+        return $?
+      fi
       target="$("$ww_helper_bin" new-path "$@")" || return $?
       ;;
     list)
@@ -57,6 +75,10 @@ ww() {
       return 0
       ;;
     *)
+      if ww_has_json_flag "$@"; then
+        "$ww_helper_bin" switch-path "$@"
+        return $?
+      fi
       target="$("$ww_helper_bin" switch-path "$@")" || return $?
       ;;
   esac

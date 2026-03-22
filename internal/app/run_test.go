@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -249,6 +250,90 @@ func TestRunListShowsDirtyStatuses(t *testing.T) {
 	}
 }
 
+func TestRunListOutputsJSONWhenRequested(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true, CreatedAt: 10},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", IsDirty: true, CreatedAt: 20},
+		},
+	}
+
+	code := Run(context.Background(), []string{"list", "--json"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if !envelope.OK {
+		t.Fatalf("expected ok envelope, got %#v", envelope)
+	}
+	if envelope.Command != "list" {
+		t.Fatalf("expected command list, got %#v", envelope)
+	}
+	if envelope.Error != nil {
+		t.Fatalf("expected no error, got %#v", envelope.Error)
+	}
+
+	var items []struct {
+		Path      string `json:"path"`
+		Branch    string `json:"branch"`
+		Dirty     bool   `json:"dirty"`
+		Active    bool   `json:"active"`
+		CreatedAt int64  `json:"created_at"`
+	}
+	decodeEnvelopeData(t, envelope, &items)
+
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %#v", items)
+	}
+	if items[0].Path != "/repo" || items[0].Branch != "main" || !items[0].Active || items[0].Dirty || items[0].CreatedAt != 10 {
+		t.Fatalf("unexpected first item: %#v", items[0])
+	}
+	if items[1].Path != "/repo/.worktrees/alpha" || items[1].Branch != "alpha" || items[1].Active || !items[1].Dirty || items[1].CreatedAt != 20 {
+		t.Fatalf("unexpected second item: %#v", items[1])
+	}
+}
+
+func TestRunListOutputsJSONErrorWhenRequested(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"list", "--json"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{
+		err: git.ErrNotGitRepository,
+	})
+
+	if code != 3 {
+		t.Fatalf("expected exit code 3, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if envelope.OK {
+		t.Fatalf("expected error envelope, got %#v", envelope)
+	}
+	if envelope.Command != "list" {
+		t.Fatalf("expected command list, got %#v", envelope)
+	}
+	if envelope.Error == nil {
+		t.Fatalf("expected error details, got %#v", envelope)
+	}
+	if envelope.Error.Code != "NOT_GIT_REPO" || envelope.Error.ExitCode != 3 {
+		t.Fatalf("unexpected error payload: %#v", envelope.Error)
+	}
+	if !strings.Contains(envelope.Error.Message, "not a git repository") {
+		t.Fatalf("expected non-repo message, got %#v", envelope.Error)
+	}
+}
+
 func TestRunNewPathPrintsSelectedPath(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -315,6 +400,77 @@ func TestRunNewPathUsesCanonicalRepoKeyWhenCreatedPathUsesAlias(t *testing.T) {
 	}
 	if deps.touched.path != "/alias/repo/.worktrees/alpha" {
 		t.Fatalf("expected created path to be touched, got %#v", deps.touched)
+	}
+}
+
+func TestRunNewPathOutputsJSONWhenRequested(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		createPath: "/repo/.worktrees/alpha",
+		repoKey:    "/repo/.git",
+		touched:    &touchRecord{},
+	}
+
+	code := Run(context.Background(), []string{"new-path", "--json", "alpha"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if !envelope.OK {
+		t.Fatalf("expected ok envelope, got %#v", envelope)
+	}
+	if envelope.Command != "new-path" {
+		t.Fatalf("expected command new-path, got %#v", envelope)
+	}
+	if envelope.Error != nil {
+		t.Fatalf("expected no error, got %#v", envelope.Error)
+	}
+
+	var data struct {
+		WorktreePath string `json:"worktree_path"`
+		Branch       string `json:"branch"`
+	}
+	decodeEnvelopeData(t, envelope, &data)
+
+	if data.WorktreePath != "/repo/.worktrees/alpha" || data.Branch != "alpha" {
+		t.Fatalf("unexpected data payload: %#v", data)
+	}
+	if deps.touched.repoKey != "/repo/.git" || deps.touched.path != "/repo/.worktrees/alpha" {
+		t.Fatalf("expected state touch after successful create, got %#v", deps.touched)
+	}
+}
+
+func TestRunNewPathOutputsJSONErrorWhenMissingName(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"new-path", "--json"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if envelope.OK {
+		t.Fatalf("expected error envelope, got %#v", envelope)
+	}
+	if envelope.Command != "new-path" {
+		t.Fatalf("expected command new-path, got %#v", envelope)
+	}
+	if envelope.Error == nil || envelope.Error.ExitCode != 2 {
+		t.Fatalf("unexpected error payload: %#v", envelope.Error)
+	}
+	if !strings.Contains(envelope.Error.Message, "missing worktree name") {
+		t.Fatalf("expected missing-name message, got %#v", envelope.Error)
 	}
 }
 
@@ -434,6 +590,151 @@ func TestRunRmDirtyCandidateShowsStopCardWithoutConfirming(t *testing.T) {
 	}
 }
 
+func TestRunRmOutputsJSONErrorForDirtyTargetWhenRequested(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/beta": {
+				Worktree:   worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+				BaseBranch: "main",
+				Dirty:      true,
+			},
+		},
+		defaultBranch: "main",
+	}
+
+	code := Run(context.Background(), []string{"rm", "--json", "--non-interactive", "beta"}, strings.NewReader(""), stdout, stderr, deps)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if envelope.OK {
+		t.Fatalf("expected error envelope, got %#v", envelope)
+	}
+	if envelope.Command != "rm" {
+		t.Fatalf("expected command rm, got %#v", envelope)
+	}
+	if envelope.Error == nil {
+		t.Fatalf("expected error payload, got %#v", envelope)
+	}
+	if envelope.Error.Code != "WORKTREE_DIRTY" || envelope.Error.ExitCode != 1 {
+		t.Fatalf("unexpected error payload: %#v", envelope.Error)
+	}
+	if !strings.Contains(envelope.Error.Message, "uncommitted changes") {
+		t.Fatalf("expected dirty-worktree message, got %#v", envelope.Error)
+	}
+}
+
+func TestRunRmNonInteractiveSkipsConfirmation(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+		},
+		defaultBranch: "main",
+		removeResult: git.RemoveResult{
+			WorktreePath:    "/repo/.worktrees/alpha",
+			Branch:          "alpha",
+			BaseBranch:      "main",
+			RemovedWorktree: true,
+			DeletedBranch:   true,
+		},
+		removed: removed,
+	}
+
+	code := Run(context.Background(), []string{"rm", "--non-interactive", "alpha"}, strings.NewReader(""), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if strings.Contains(stderr.String(), "Delete this worktree? [y/N]:") {
+		t.Fatalf("expected confirmation prompt to be skipped, got %q", stderr.String())
+	}
+	if removed.item.Path != "/repo/.worktrees/alpha" || removed.opts.BaseBranch != "main" || removed.opts.Force {
+		t.Fatalf("expected removal call, got %#v", removed)
+	}
+	if !strings.Contains(stdout.String(), "removed worktree") {
+		t.Fatalf("expected human-readable removal output, got %q", stdout.String())
+	}
+}
+
+func TestRunRmNonInteractiveRejectsMissingTargetWhenMultipleCandidatesExist(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+			"/repo/.worktrees/beta": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+		},
+		defaultBranch: "main",
+	}
+
+	code := Run(context.Background(), []string{"rm", "--json", "--non-interactive"}, strings.NewReader(""), stdout, stderr, deps)
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if envelope.OK {
+		t.Fatalf("expected error envelope, got %#v", envelope)
+	}
+	if envelope.Command != "rm" {
+		t.Fatalf("expected command rm, got %#v", envelope)
+	}
+	if envelope.Error == nil {
+		t.Fatalf("expected error payload, got %#v", envelope)
+	}
+	if envelope.Error.Code != "AMBIGUOUS_MATCH" || envelope.Error.ExitCode != 2 {
+		t.Fatalf("unexpected error payload: %#v", envelope.Error)
+	}
+	if !strings.Contains(envelope.Error.Message, "must specify a target") {
+		t.Fatalf("expected ambiguous-target message, got %#v", envelope.Error)
+	}
+}
+
 func TestRunRmOutputsJSONWhenRequested(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -465,11 +766,25 @@ func TestRunRmOutputsJSONWhenRequested(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
-	if !strings.Contains(stdout.String(), `"deleted_branch":true`) || !strings.Contains(stdout.String(), `"base_branch":"release/1.0"`) {
-		t.Fatalf("expected json output, got %q", stdout.String())
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if !envelope.OK {
+		t.Fatalf("expected ok envelope, got %#v", envelope)
 	}
-	if stderr.Len() == 0 {
-		t.Fatalf("expected confirmation details on stderr")
+	if envelope.Command != "rm" {
+		t.Fatalf("expected command rm, got %#v", envelope)
+	}
+
+	var data struct {
+		WorktreePath    string `json:"worktree_path"`
+		BaseBranch      string `json:"base_branch"`
+		DeletedBranch   bool   `json:"deleted_branch"`
+		RemovedWorktree bool   `json:"removed_worktree"`
+	}
+	decodeEnvelopeData(t, envelope, &data)
+
+	if data.WorktreePath != "/repo/.worktrees/alpha" || data.BaseBranch != "release/1.0" || !data.DeletedBranch || !data.RemovedWorktree {
+		t.Fatalf("unexpected json payload, got %#v", data)
 	}
 }
 
@@ -991,6 +1306,19 @@ func TestRunSwitchPathInteractiveSelectionReturnsNonZeroOnEOFWithoutSelection(t 
 	}
 }
 
+type envelope struct {
+	OK      bool            `json:"ok"`
+	Command string          `json:"command"`
+	Data    json.RawMessage `json:"data"`
+	Error   *envelopeError  `json:"error"`
+}
+
+type envelopeError struct {
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	ExitCode int    `json:"exit_code"`
+}
+
 type fakeDeps struct {
 	repoKey          string
 	repoKeyErr       error
@@ -1023,6 +1351,27 @@ type touchRecord struct {
 type removeCall struct {
 	item worktree.Worktree
 	opts git.RemoveOptions
+}
+
+func decodeEnvelope(t *testing.T, raw string) envelope {
+	t.Helper()
+
+	var got envelope
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("expected valid JSON envelope, got %q: %v", raw, err)
+	}
+	return got
+}
+
+func decodeEnvelopeData(t *testing.T, env envelope, target any) {
+	t.Helper()
+
+	if len(env.Data) == 0 {
+		t.Fatalf("expected data payload, got %#v", env)
+	}
+	if err := json.Unmarshal(env.Data, target); err != nil {
+		t.Fatalf("expected decodable data payload %q: %v", string(env.Data), err)
+	}
 }
 
 func (f fakeDeps) CurrentRepoKey(context.Context) (string, error) {

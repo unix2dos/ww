@@ -31,6 +31,16 @@ type Deps interface {
 	RemoveWorktree(ctx context.Context, item worktree.Worktree, opts git.RemoveOptions) (git.RemoveResult, error)
 }
 
+type appError struct {
+	Code     string
+	Message  string
+	ExitCode int
+}
+
+func (e appError) Error() string {
+	return e.Message
+}
+
 type RealDeps struct{}
 
 var defaultStateStore struct {
@@ -112,7 +122,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut
 	case "new-path":
 		return runNewPath(ctx, args[1:], out, errOut, deps)
 	case "list":
-		return runList(ctx, out, errOut, deps)
+		return runList(ctx, args[1:], out, errOut, deps)
 	case "rm":
 		return runRemove(ctx, args[1:], in, out, errOut, deps)
 	default:
@@ -207,15 +217,46 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 	return 0
 }
 
-func runList(ctx context.Context, out io.Writer, errOut io.Writer, deps Deps) int {
+type listConfig struct {
+	json bool
+}
+
+func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer, deps Deps) int {
+	cfg, err := parseListArgs(args)
+	if err != nil {
+		return writeCommandError("list", out, errOut, cfg.json, err)
+	}
+
 	_, items, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
-		return writeWorktreeError(errOut, err)
+		return writeCommandError("list", out, errOut, cfg.json, err)
 	}
-	warnStateIssue(errOut, warn)
+	if !cfg.json {
+		warnStateIssue(errOut, warn)
+	}
 	if len(items) == 0 {
-		fmt.Fprintln(errOut, "no worktrees available")
-		return 1
+		if cfg.json {
+			return writeJSONSuccess(out, "list", []any{})
+		}
+		return writeCommandError("list", out, errOut, cfg.json, appError{
+			Code:     "WORKTREE_NOT_FOUND",
+			Message:  "no worktrees available",
+			ExitCode: 1,
+		})
+	}
+
+	if cfg.json {
+		payload := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			payload = append(payload, map[string]any{
+				"path":       item.Path,
+				"branch":     item.BranchLabel,
+				"dirty":      item.IsDirty,
+				"active":     item.IsCurrent,
+				"created_at": item.CreatedAt,
+			})
+		}
+		return writeJSONSuccess(out, "list", payload)
 	}
 
 	for _, item := range items {
@@ -224,24 +265,35 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, deps Deps) in
 	return 0
 }
 
+type newPathConfig struct {
+	json bool
+	name string
+}
+
 func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Writer, deps Deps) int {
-	if len(args) == 0 {
-		fmt.Fprintln(errOut, "missing worktree name")
-		return 2
-	}
-	if len(args) > 1 {
-		fmt.Fprintf(errOut, "unexpected extra arguments: %s\n", strings.Join(args[1:], " "))
-		return 2
+	cfg, err := parseNewPathArgs(args)
+	if err != nil {
+		return writeCommandError("new-path", out, errOut, cfg.json, err)
 	}
 
 	repoKey, err := deps.CurrentRepoKey(ctx)
 	if err != nil {
-		return writeWorktreeError(errOut, err)
+		return writeCommandError("new-path", out, errOut, cfg.json, err)
 	}
 
-	path, err := deps.CreateWorktree(ctx, args[0])
+	path, err := deps.CreateWorktree(ctx, cfg.name)
 	if err != nil {
-		return writeWorktreeError(errOut, err)
+		return writeCommandError("new-path", out, errOut, cfg.json, err)
+	}
+
+	if cfg.json {
+		if err := touchWorktreeStateBestEffort(ctx, deps, repoKey, path); err != nil {
+			return writeCommandError("new-path", out, errOut, cfg.json, err)
+		}
+		return writeJSONSuccess(out, "new-path", map[string]any{
+			"worktree_path": path,
+			"branch":        cfg.name,
+		})
 	}
 
 	fmt.Fprintln(out, path)
@@ -250,10 +302,11 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 }
 
 type removeConfig struct {
-	force  bool
-	json   bool
-	base   string
-	target string
+	force          bool
+	json           bool
+	nonInteractive bool
+	base           string
+	target         string
 }
 
 type removalCandidate struct {
@@ -272,28 +325,31 @@ const (
 func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut io.Writer, deps Deps) int {
 	cfg, err := parseRemoveArgs(args)
 	if err != nil {
-		fmt.Fprintln(errOut, err)
-		return 2
+		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
 
 	_, items, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
-		return writeWorktreeError(errOut, err)
+		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
-	warnStateIssue(errOut, warn)
+	if !cfg.json {
+		warnStateIssue(errOut, warn)
+	}
 
 	candidates := filterNonCurrent(items)
 	if len(candidates) == 0 {
-		fmt.Fprintln(errOut, "no removable worktrees available")
-		return 1
+		return writeCommandError("rm", out, errOut, cfg.json, appError{
+			Code:     "WORKTREE_NOT_FOUND",
+			Message:  "no removable worktrees available",
+			ExitCode: 1,
+		})
 	}
 
 	baseBranch := cfg.base
 	if baseBranch == "" {
 		baseBranch, err = deps.DefaultBranch(ctx)
 		if err != nil {
-			fmt.Fprintln(errOut, err)
-			return 1
+			return writeCommandError("rm", out, errOut, cfg.json, err)
 		}
 	}
 
@@ -301,29 +357,45 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 	for _, item := range candidates {
 		preview, err := deps.PreviewRemoval(ctx, item, baseBranch)
 		if err != nil {
-			fmt.Fprintln(errOut, err)
-			return 1
+			return writeCommandError("rm", out, errOut, cfg.json, err)
 		}
 		previewed = append(previewed, removalCandidate{item: item, preview: preview})
 	}
 
-	reader := bufio.NewReader(in)
-	selected, ok, exitCode := selectRemovalCandidate(reader, errOut, previewed, cfg.target, cfg.force)
-	if !ok {
-		return exitCode
-	}
+	selected := removalCandidate{}
+	if cfg.json || cfg.nonInteractive {
+		selected, err = selectRemovalCandidateNonInteractive(items, previewed, cfg.target)
+		if err != nil {
+			return writeCommandError("rm", out, errOut, cfg.json, err)
+		}
+		if removalSeverityFor(selected.preview, cfg.force) == removalSeverityStop {
+			return writeCommandError("rm", out, errOut, cfg.json, appError{
+				Code:     "WORKTREE_DIRTY",
+				Message:  "worktree has uncommitted changes; rerun with --force",
+				ExitCode: 1,
+			})
+		}
+	} else {
+		reader := bufio.NewReader(in)
+		var ok bool
+		var exitCode int
+		selected, ok, exitCode = selectRemovalCandidate(reader, errOut, previewed, cfg.target, cfg.force)
+		if !ok {
+			return exitCode
+		}
 
-	renderRemovalSummary(errOut, selected, cfg.force)
-	if removalSeverityFor(selected.preview, cfg.force) == removalSeverityStop {
-		return 1
-	}
+		renderRemovalSummary(errOut, selected, cfg.force)
+		if removalSeverityFor(selected.preview, cfg.force) == removalSeverityStop {
+			return 1
+		}
 
-	confirmed, err := confirmPrompt(reader, errOut, "Delete this worktree? [y/N]: ")
-	if err != nil {
-		return writeSelectionError(errOut, err)
-	}
-	if !confirmed {
-		return 130
+		confirmed, err := confirmPrompt(reader, errOut, "Delete this worktree? [y/N]: ")
+		if err != nil {
+			return writeSelectionError(errOut, err)
+		}
+		if !confirmed {
+			return 130
+		}
 	}
 
 	result, err := deps.RemoveWorktree(ctx, selected.item, git.RemoveOptions{
@@ -331,12 +403,11 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		Force:      cfg.force,
 	})
 	if err != nil {
-		fmt.Fprintln(errOut, err)
-		return 1
+		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
 
 	if cfg.json {
-		return writeRemoveJSON(out, result)
+		return writeJSONSuccess(out, "rm", removeJSONPayload(result))
 	}
 	writeRemoveHuman(out, result)
 	return 0
@@ -366,19 +437,21 @@ func parseRemoveArgs(args []string) (removeConfig, error) {
 			cfg.force = true
 		case arg == "--json":
 			cfg.json = true
+		case arg == "--non-interactive":
+			cfg.nonInteractive = true
 		case arg == "--base":
 			if i+1 >= len(args) {
-				return removeConfig{}, fmt.Errorf("missing value for --base")
+				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --base", ExitCode: 2}
 			}
 			i++
 			cfg.base = args[i]
 		case strings.HasPrefix(arg, "--base="):
 			cfg.base = strings.TrimPrefix(arg, "--base=")
 		case strings.HasPrefix(arg, "-"):
-			return removeConfig{}, fmt.Errorf("unknown option: %s", arg)
+			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
 		default:
 			if cfg.target != "" {
-				return removeConfig{}, fmt.Errorf("unexpected extra arguments: %s", strings.Join(args[i:], " "))
+				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
 			}
 			cfg.target = arg
 		}
@@ -397,20 +470,87 @@ func filterNonCurrent(items []worktree.Worktree) []worktree.Worktree {
 	return out
 }
 
+func parseListArgs(args []string) (listConfig, error) {
+	var cfg listConfig
+	for _, arg := range args {
+		switch {
+		case arg == "--json":
+			cfg.json = true
+		case strings.HasPrefix(arg, "-"):
+			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
+		default:
+			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args, " ")), ExitCode: 2}
+		}
+	}
+	return cfg, nil
+}
+
+func parseNewPathArgs(args []string) (newPathConfig, error) {
+	var cfg newPathConfig
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--json":
+			cfg.json = true
+		case strings.HasPrefix(arg, "-"):
+			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
+		default:
+			if cfg.name != "" {
+				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
+			}
+			cfg.name = arg
+		}
+	}
+	if cfg.name == "" {
+		return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing worktree name", ExitCode: 2}
+	}
+	return cfg, nil
+}
+
+func selectRemovalCandidateNonInteractive(allItems []worktree.Worktree, candidates []removalCandidate, target string) (removalCandidate, error) {
+	if target == "" {
+		if len(candidates) == 1 {
+			return candidates[0], nil
+		}
+		return removalCandidate{}, appError{
+			Code:     "AMBIGUOUS_MATCH",
+			Message:  "must specify a target when multiple removable worktrees exist",
+			ExitCode: 2,
+		}
+	}
+
+	if selected, err := worktree.Match(allItems, target); err == nil && selected.IsCurrent {
+		return removalCandidate{}, appError{
+			Code:     "REMOVE_CURRENT",
+			Message:  "cannot remove the active worktree",
+			ExitCode: 1,
+		}
+	}
+
+	return matchRemovalCandidate(candidates, target)
+}
+
+func matchRemovalCandidate(candidates []removalCandidate, target string) (removalCandidate, error) {
+	items := make([]worktree.Worktree, 0, len(candidates))
+	byPath := make(map[string]removalCandidate, len(candidates))
+	for _, candidate := range candidates {
+		items = append(items, candidate.item)
+		byPath[candidate.item.Path] = candidate
+	}
+	selected, err := worktree.Match(items, target)
+	if err != nil {
+		return removalCandidate{}, err
+	}
+	return byPath[selected.Path], nil
+}
+
 func selectRemovalCandidate(reader *bufio.Reader, errOut io.Writer, candidates []removalCandidate, target string, force bool) (removalCandidate, bool, int) {
 	if target != "" {
-		items := make([]worktree.Worktree, 0, len(candidates))
-		byPath := make(map[string]removalCandidate, len(candidates))
-		for _, candidate := range candidates {
-			items = append(items, candidate.item)
-			byPath[candidate.item.Path] = candidate
-		}
-		selected, err := worktree.Match(items, target)
+		selected, err := matchRemovalCandidate(candidates, target)
 		if err != nil {
 			fmt.Fprintln(errOut, err)
 			return removalCandidate{}, false, 2
 		}
-		return byPath[selected.Path], true, 0
+		return selected, true, 0
 	}
 
 	display := orderedRemovalCandidates(candidates, force)
@@ -668,8 +808,8 @@ func writeRemoveHuman(out io.Writer, result git.RemoveResult) {
 	}
 }
 
-func writeRemoveJSON(out io.Writer, result git.RemoveResult) int {
-	payload := map[string]any{
+func removeJSONPayload(result git.RemoveResult) map[string]any {
+	return map[string]any{
 		"worktree_path":      result.WorktreePath,
 		"branch":             result.Branch,
 		"base_branch":        result.BaseBranch,
@@ -677,12 +817,77 @@ func writeRemoveJSON(out io.Writer, result git.RemoveResult) int {
 		"deleted_branch":     result.DeletedBranch,
 		"kept_branch_reason": result.KeptBranchReason,
 	}
+}
+
+func writeJSONSuccess(out io.Writer, command string, data any) int {
+	payload := map[string]any{
+		"ok":      true,
+		"command": command,
+		"data":    data,
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return 1
 	}
 	fmt.Fprintln(out, string(encoded))
 	return 0
+}
+
+func writeJSONError(out io.Writer, command string, err appError) int {
+	payload := map[string]any{
+		"ok":      false,
+		"command": command,
+		"error": map[string]any{
+			"code":      err.Code,
+			"message":   err.Message,
+			"exit_code": err.ExitCode,
+		},
+	}
+	encoded, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		return 1
+	}
+	fmt.Fprintln(out, string(encoded))
+	return err.ExitCode
+}
+
+func writeCommandError(command string, out io.Writer, errOut io.Writer, jsonMode bool, err error) int {
+	appErr := classifyError(err)
+	if jsonMode {
+		return writeJSONError(out, command, appErr)
+	}
+	if appErr.Message != "" {
+		fmt.Fprintln(errOut, appErr.Message)
+	}
+	return appErr.ExitCode
+}
+
+func classifyError(err error) appError {
+	var appErr appError
+	if errors.As(err, &appErr) {
+		return appErr
+	}
+
+	switch {
+	case errors.Is(err, git.ErrNotGitRepository):
+		return appError{Code: "NOT_GIT_REPO", Message: "not a git repository", ExitCode: 3}
+	case errors.Is(err, ui.ErrSelectionCanceled):
+		return appError{Code: "CANCELLED", Message: "selection canceled", ExitCode: 130}
+	case errors.Is(err, ui.ErrFzfNotInstalled):
+		return appError{Code: "GIT_ERROR", Message: "fzf is not installed", ExitCode: 3}
+	}
+
+	message := err.Error()
+	switch {
+	case strings.HasPrefix(message, "ambiguous worktree match"):
+		return appError{Code: "AMBIGUOUS_MATCH", Message: message, ExitCode: 2}
+	case strings.HasPrefix(message, "no worktree matches"):
+		return appError{Code: "WORKTREE_NOT_FOUND", Message: message, ExitCode: 2}
+	case strings.Contains(message, "uncommitted changes"):
+		return appError{Code: "WORKTREE_DIRTY", Message: message, ExitCode: 1}
+	default:
+		return appError{Code: "GIT_ERROR", Message: message, ExitCode: 1}
+	}
 }
 
 func selectInteractiveWorktree(ctx context.Context, in io.Reader, errOut io.Writer, items []worktree.Worktree, deps Deps, forceFzf bool) (worktree.Worktree, error) {

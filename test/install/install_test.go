@@ -417,6 +417,99 @@ func TestWwListPrintsOutputWithoutChangingDirectory(t *testing.T) {
 	}
 }
 
+func TestWwListJSONPrintsOutputWithoutChangingDirectory(t *testing.T) {
+	home := t.TempDir()
+	rcPath := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(rcPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("write rc file: %v", err)
+	}
+
+	runInstall(t, home)
+
+	origin := t.TempDir()
+	listOutput := `{"ok":true,"command":"list","data":[{"path":"/repo","branch":"main"}]}`
+	if err := writeExecutableScript(filepath.Join(home, ".local", "bin", "ww-helper"), fmt.Sprintf("#!/usr/bin/env bash\n[ \"$1\" = \"list\" ] || exit 9\n[ \"$2\" = \"--json\" ] || exit 8\nprintf '%%s\\n' %q\n", listOutput)); err != nil {
+		t.Fatalf("write fake ww-helper: %v", err)
+	}
+
+	out := runShell(t, home, fmt.Sprintf(`
+		cd %q
+		source %q
+		ww list --json
+		pwd
+	`, origin, rcPath))
+
+	if !strings.Contains(out, listOutput) {
+		t.Fatalf("expected list json output, got %q", out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if got := lines[len(lines)-1]; got != origin {
+		t.Fatalf("expected shell to stay in %q, got %q", origin, got)
+	}
+}
+
+func TestWwNewJSONPassesThroughWithoutChangingDirectory(t *testing.T) {
+	home := t.TempDir()
+	rcPath := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(rcPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("write rc file: %v", err)
+	}
+
+	runInstall(t, home)
+
+	origin := t.TempDir()
+	jsonOutput := `{"ok":true,"command":"new-path","data":{"worktree_path":"/repo/.worktrees/feature-x","branch":"feature-x"}}`
+	if err := writeExecutableScript(filepath.Join(home, ".local", "bin", "ww-helper"), fmt.Sprintf("#!/usr/bin/env bash\n[ \"$1\" = \"new-path\" ] || exit 9\n[ \"$2\" = \"--json\" ] || exit 8\n[ \"$3\" = \"feature-x\" ] || exit 7\nprintf '%%s\\n' %q\n", jsonOutput)); err != nil {
+		t.Fatalf("write fake ww-helper: %v", err)
+	}
+
+	out := runShell(t, home, fmt.Sprintf(`
+		cd %q
+		source %q
+		ww new --json feature-x
+		pwd
+	`, origin, rcPath))
+
+	if !strings.Contains(out, jsonOutput) {
+		t.Fatalf("expected new json output, got %q", out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if got := lines[len(lines)-1]; got != origin {
+		t.Fatalf("expected shell to stay in %q, got %q", origin, got)
+	}
+}
+
+func TestWwSwitchJSONPassesThroughWithoutChangingDirectory(t *testing.T) {
+	home := t.TempDir()
+	rcPath := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(rcPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("write rc file: %v", err)
+	}
+
+	runInstall(t, home)
+
+	origin := t.TempDir()
+	jsonOutput := `{"ok":true,"command":"switch-path","data":{"worktree_path":"/repo/.worktrees/alpha","branch":"alpha"}}`
+	if err := writeExecutableScript(filepath.Join(home, ".local", "bin", "ww-helper"), fmt.Sprintf("#!/usr/bin/env bash\n[ \"$1\" = \"switch-path\" ] || exit 9\n[ \"$2\" = \"--json\" ] || exit 8\n[ \"$3\" = \"alpha\" ] || exit 7\nprintf '%%s\\n' %q\n", jsonOutput)); err != nil {
+		t.Fatalf("write fake ww-helper: %v", err)
+	}
+
+	out := runShell(t, home, fmt.Sprintf(`
+		cd %q
+		source %q
+		ww switch --json alpha
+		pwd
+	`, origin, rcPath))
+
+	if !strings.Contains(out, jsonOutput) {
+		t.Fatalf("expected switch json output, got %q", out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if got := lines[len(lines)-1]; got != origin {
+		t.Fatalf("expected shell to stay in %q, got %q", origin, got)
+	}
+}
+
 func TestWwRmPassThroughWithoutChangingDirectory(t *testing.T) {
 	home := t.TempDir()
 	rcPath := filepath.Join(home, ".zshrc")
