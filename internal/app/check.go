@@ -85,13 +85,7 @@ func loadCheckNote(ctx context.Context, deps Deps, entry listEntry) (*tasknote.N
 		return nil, warnings
 	}
 
-	notePath, err := deps.WorktreeGitPath(ctx, entry.item.Path, "ww/task-note.md")
-	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("warning: task note unavailable: %v", err))
-		return nil, warnings
-	}
-
-	note, err := tasknote.ReadFile(notePath)
+	note, err := readTaskNote(ctx, deps, entry.item.Path, entry.meta.Label)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			warnings = append(warnings, "warning: task note missing for labeled worktree")
@@ -102,4 +96,15 @@ func loadCheckNote(ctx context.Context, deps Deps, entry listEntry) (*tasknote.N
 	}
 
 	return &note, warnings
+}
+
+func readTaskNote(ctx context.Context, deps Deps, worktreePath, label string) (tasknote.Note, error) {
+	if label == "" {
+		return tasknote.Note{}, fmt.Errorf("task label is required")
+	}
+	notePath, err := deps.WorktreeGitPath(ctx, worktreePath, "ww/task-note.md")
+	if err != nil {
+		return tasknote.Note{}, err
+	}
+	return tasknote.ReadFile(notePath)
 }

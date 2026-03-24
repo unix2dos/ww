@@ -1151,6 +1151,98 @@ func TestRunRmDirtyCandidateShowsStopCardWithoutConfirming(t *testing.T) {
 	}
 }
 
+func TestRunRemoveSummaryIncludesTaskContext(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	notePath := filepath.Join(t.TempDir(), "git-private", "ww", "task-note.md")
+	if err := tasknote.WriteFile(notePath, tasknote.Note{
+		TaskLabel: "task:fix-login",
+		Branch:    "alpha",
+		CreatedAt: time.Date(2026, 3, 24, 12, 34, 56, 0, time.UTC),
+		Intent:    "Fix the login redirect loop",
+		Body:      "Created by ww.",
+	}); err != nil {
+		t.Fatalf("write task note: %v", err)
+	}
+
+	deps := fakeDeps{
+		repoKey:         "/repo/.git",
+		defaultBranch:   "main",
+		removed:         removed,
+		worktreeGitPath: notePath,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", BranchRef: "refs/heads/main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		metadata: map[string]map[string]state.WorktreeMetadata{
+			"/repo/.git": {
+				"/repo/.worktrees/alpha": {
+					Label: "task:fix-login",
+				},
+			},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+		},
+		removeResult: git.RemoveResult{
+			WorktreePath:    "/repo/.worktrees/alpha",
+			Branch:          "alpha",
+			BaseBranch:      "main",
+			RemovedWorktree: true,
+			DeletedBranch:   true,
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "alpha"}, strings.NewReader("y\n"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "task:fix-login") {
+		t.Fatalf("expected task label in summary, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Fix the login redirect loop") {
+		t.Fatalf("expected task intent in summary, got %q", stderr.String())
+	}
+}
+
+func TestRunRemoveSummaryShowsWeakerBoundaryState(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", BranchRef: "refs/heads/main", IsCurrent: true},
+			{Path: "/repo/.worktrees/scratch", BranchLabel: "scratch"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/scratch": {
+				Worktree:   worktree.Worktree{Path: "/repo/.worktrees/scratch", BranchLabel: "scratch"},
+				BaseBranch: "main",
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "scratch"}, strings.NewReader("n\n"), stdout, stderr, deps)
+
+	if code != 130 {
+		t.Fatalf("expected exit code 130, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "unlabeled") {
+		t.Fatalf("expected unlabeled boundary warning, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "detached") {
+		t.Fatalf("expected detached boundary warning, got %q", stderr.String())
+	}
+}
+
 func TestRunRmOutputsJSONErrorForDirtyTargetWhenRequested(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}

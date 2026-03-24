@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -557,8 +558,11 @@ type removeConfig struct {
 }
 
 type removalCandidate struct {
-	item    worktree.Worktree
-	preview git.RemovalPreview
+	item             worktree.Worktree
+	preview          git.RemovalPreview
+	taskLabel        string
+	taskIntent       string
+	boundaryWarnings []string
 }
 
 type removalSeverity int
@@ -575,7 +579,7 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
 
-	_, items, _, warn, err := orderedWorktrees(ctx, deps)
+	_, items, metadata, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
 		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
@@ -606,7 +610,7 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		if err != nil {
 			return writeCommandError("rm", out, errOut, cfg.json, err)
 		}
-		previewed = append(previewed, removalCandidate{item: item, preview: preview})
+		previewed = append(previewed, enrichRemovalCandidate(ctx, deps, item, preview, metadata[item.Path]))
 	}
 
 	selected := removalCandidate{}
@@ -1190,11 +1194,52 @@ func renderRemovalSummary(w io.Writer, candidate removalCandidate, force bool) {
 	fmt.Fprintf(w, "Selected: %s\n\n", label)
 	fmt.Fprintf(w, "%s %s\n", removalSeverityIcon(severity), removalSummaryTitle(severity))
 
+	renderSummarySection(w, "Task context:", removalTaskContext(candidate))
 	renderSummarySection(w, "Will remove:", removalWillRemove(candidate.preview))
 	renderSummarySection(w, "Will keep:", removalWillKeep(candidate.preview))
 	renderSummarySection(w, "Will not remove:", removalWillNotRemove(candidate.preview))
 	renderSummarySection(w, "Risk:", removalRiskItems(candidate.preview, force))
+	renderSummarySection(w, "Boundary warning:", candidate.boundaryWarnings)
 	renderSummarySection(w, "Next step:", removalNextSteps(candidate.preview, force))
+}
+
+func enrichRemovalCandidate(ctx context.Context, deps Deps, item worktree.Worktree, preview git.RemovalPreview, meta state.WorktreeMetadata) removalCandidate {
+	candidate := removalCandidate{
+		item:      item,
+		preview:   preview,
+		taskLabel: meta.Label,
+	}
+
+	if candidate.taskLabel == "" {
+		candidate.boundaryWarnings = append(candidate.boundaryWarnings, "worktree is unlabeled")
+	} else {
+		note, err := readTaskNote(ctx, deps, item.Path, candidate.taskLabel)
+		switch {
+		case err == nil:
+			candidate.taskIntent = note.Intent
+		case errors.Is(err, os.ErrNotExist):
+			candidate.boundaryWarnings = append(candidate.boundaryWarnings, "task note missing for labeled worktree")
+		default:
+			candidate.boundaryWarnings = append(candidate.boundaryWarnings, fmt.Sprintf("task note unavailable: %v", err))
+		}
+	}
+
+	if item.BranchRef == "" {
+		candidate.boundaryWarnings = append(candidate.boundaryWarnings, "worktree is detached")
+	}
+
+	return candidate
+}
+
+func removalTaskContext(candidate removalCandidate) []string {
+	items := make([]string, 0, 2)
+	if candidate.taskLabel != "" {
+		items = append(items, fmt.Sprintf("task %s", candidate.taskLabel))
+	}
+	if candidate.taskIntent != "" {
+		items = append(items, candidate.taskIntent)
+	}
+	return items
 }
 
 func removalSummaryTitle(severity removalSeverity) string {
