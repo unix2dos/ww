@@ -1,6 +1,6 @@
-# ww
+# w+w
 
-One command to switch, create, and clean up worktrees.
+Short click, short move — fast switch worktrees with fzf.
 
 `ww` is a shell-first Git worktree workflow for the current repository. Use the fast picker to jump into an existing branch, open a fresh worktree from where you already are, and clean up temporary branches without breaking shell flow.
 
