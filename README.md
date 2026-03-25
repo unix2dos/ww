@@ -59,6 +59,8 @@ ww-helper gc --ttl-expired --dry-run --json
 ww-helper rm --json --non-interactive feat-demo
 ```
 
+`ww` does not install platform-specific skills. The shared contract for coding agents is the machine-readable `ww-helper` interface plus repository instructions such as `AGENTS.md`. If your agent platform supports installable skills, this repository also ships an optional template at `skills/using-ww-worktrees/SKILL.md`.
+
 Human-facing safety flow:
 
 ```bash
@@ -68,6 +70,8 @@ ww rm --cleanup
 ```
 
 `ww-helper rm --json` uses the same JSON envelope shape as the other machine-readable commands. For humans, bulk cleanup lives under `ww rm --cleanup`. For automation, `ww-helper gc` still requires at least one explicit selector such as `--ttl-expired`, `--idle 7d`, or `--merged`.
+
+If you want a local skill for Codex or another skill-capable agent, see [Optional Agent Skill Setup](docs/agent-skills.md).
 
 ## Reference
 
