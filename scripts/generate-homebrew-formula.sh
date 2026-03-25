@@ -149,13 +149,18 @@ EOF
       `ww` changes the current shell directory, so Homebrew installs the helper and shell library
       but leaves shell activation to you.
 
-      Add one line to your shell rc file:
+      Add these lines to your shell rc file:
+
+        export WW_HELPER_BIN="#{opt_bin}/ww-helper"
+        source "#{opt_libexec}/ww.sh"
 
       For zsh:
-        eval "$("#{opt_bin}/ww-helper" init zsh)"
+        echo 'export WW_HELPER_BIN="#{opt_bin}/ww-helper"' >> ~/.zshrc
+        echo 'source "#{opt_libexec}/ww.sh"' >> ~/.zshrc
 
       For bash:
-        eval "$("#{opt_bin}/ww-helper" init bash)"
+        echo 'export WW_HELPER_BIN="#{opt_bin}/ww-helper"' >> ~/.bashrc
+        echo 'source "#{opt_libexec}/ww.sh"' >> ~/.bashrc
     EOS
   end
 

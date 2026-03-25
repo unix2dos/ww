@@ -23,8 +23,8 @@ func TestPagesDemoContract(t *testing.T) {
 	if !strings.Contains(readme, "brew install ww") {
 		t.Fatalf("expected README to document the Homebrew install command")
 	}
-	if !strings.Contains(readme, `ww-helper init zsh`) {
-		t.Fatalf("expected README to document ww-helper init for Homebrew")
+	if !strings.Contains(readme, `source "$(brew --prefix ww)/libexec/ww.sh"`) {
+		t.Fatalf("expected README to document sourcing the Homebrew shell library")
 	}
 	if !strings.Contains(readme, "https://unix2dos.github.io/ww/") {
 		t.Fatalf("expected README to link to the GitHub Pages demo")
@@ -65,9 +65,8 @@ func TestPagesDemoContract(t *testing.T) {
 		"# ww Reference",
 		"## Install",
 		"### Homebrew Tap",
-		`ww-helper init zsh`,
-		`ww-helper init bash`,
-		`eval "$("`,
+		`export WW_HELPER_BIN="$(brew --prefix ww)/bin/ww-helper"`,
+		`source "$(brew --prefix ww)/libexec/ww.sh"`,
 		"Homebrew installs the helper and shell library, but leaves shell activation to you.",
 		"## Usage",
 		"## Release",
@@ -106,7 +105,7 @@ func TestPagesDemoContract(t *testing.T) {
 		`bin.install "bin/ww-helper"`,
 		`libexec.install "shell/ww.sh"`,
 		"def caveats",
-		`eval "$("#{opt_bin}/ww-helper" init zsh)"`,
+		`source "#{opt_libexec}/ww.sh"`,
 		`assert_match "Usage: ww-helper"`,
 	} {
 		if !strings.Contains(formula, snippet) {
