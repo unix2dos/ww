@@ -29,10 +29,11 @@ Install with Homebrew tap:
 ```bash
 brew tap unix2dos/ww https://github.com/unix2dos/ww
 brew install ww
-echo 'export WW_HELPER_BIN="$(brew --prefix ww)/bin/ww-helper"' >> ~/.zshrc
-echo 'source "$(brew --prefix ww)/libexec/ww.sh"' >> ~/.zshrc
+printf 'eval "$("%s/bin/ww-helper" init zsh)"\n' "$(brew --prefix ww)" >> ~/.zshrc
 source ~/.zshrc
 ```
+
+`ww-helper init zsh` prints the activation snippet if you want to inspect it before adding it to your shell rc file.
 
 Or install the latest release for your shell:
 

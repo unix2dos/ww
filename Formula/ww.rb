@@ -1,20 +1,20 @@
 class Ww < Formula
   desc "Fast worktree switching for safer parallel work"
   homepage "https://github.com/unix2dos/ww"
-  version "0.6.0"
+  version "0.7.0"
 
   if OS.mac? && Hardware::CPU.arm?
-    url "https://github.com/unix2dos/ww/releases/download/v0.6.0/ww-v0.6.0-darwin-arm64.tar.gz"
-    sha256 "9aa0d201ea984b4e06348fc03b7ec6bf2337ea9ff79f3016369f7c0321f0e09a"
+    url "https://github.com/unix2dos/ww/releases/download/v0.7.0/ww-v0.7.0-darwin-arm64.tar.gz"
+    sha256 "294c52b2d508be5b5f8371dc547a578a812360cbee8ac993fec247a3a735b62e"
   elsif OS.mac? && Hardware::CPU.intel?
-    url "https://github.com/unix2dos/ww/releases/download/v0.6.0/ww-v0.6.0-darwin-amd64.tar.gz"
-    sha256 "288aaafdcc79be8063eb56163be3d82d33cf1ec720fd6a08e6f9bb3f0d28ba80"
+    url "https://github.com/unix2dos/ww/releases/download/v0.7.0/ww-v0.7.0-darwin-amd64.tar.gz"
+    sha256 "3ce8fe8d6fc060ee7f239071174c8abb8868040b94f4fc8e182528ae82f6f86a"
   elsif OS.linux? && Hardware::CPU.arm?
-    url "https://github.com/unix2dos/ww/releases/download/v0.6.0/ww-v0.6.0-linux-arm64.tar.gz"
-    sha256 "cf415a7c4631e4d56fe18596e2e814209d0f704fa54390d910f7f140fdd4198a"
+    url "https://github.com/unix2dos/ww/releases/download/v0.7.0/ww-v0.7.0-linux-arm64.tar.gz"
+    sha256 "0dd37a1d8168b729d769865f91022a56a64dbfed0bb75a4215c7005adf7e6b0d"
   elsif OS.linux? && Hardware::CPU.intel?
-    url "https://github.com/unix2dos/ww/releases/download/v0.6.0/ww-v0.6.0-linux-amd64.tar.gz"
-    sha256 "afab5955258e4e8b3bb1927dec5a5cc2a42a5395c3b1bef5d86f1ed9cd1c42e4"
+    url "https://github.com/unix2dos/ww/releases/download/v0.7.0/ww-v0.7.0-linux-amd64.tar.gz"
+    sha256 "e75741a2f8bb76be7deb002362bd93465065d0ba69f56102ca37622f9c346133"
   end
 
   def install
@@ -28,18 +28,13 @@ class Ww < Formula
       `ww` changes the current shell directory, so Homebrew installs the helper and shell library
       but leaves shell activation to you.
 
-      Add these lines to your shell rc file:
-
-        export WW_HELPER_BIN="#{opt_bin}/ww-helper"
-        source "#{opt_libexec}/ww.sh"
+      Add one line to your shell rc file:
 
       For zsh:
-        echo 'export WW_HELPER_BIN="#{opt_bin}/ww-helper"' >> ~/.zshrc
-        echo 'source "#{opt_libexec}/ww.sh"' >> ~/.zshrc
+        eval "$("#{opt_bin}/ww-helper" init zsh)"
 
       For bash:
-        echo 'export WW_HELPER_BIN="#{opt_bin}/ww-helper"' >> ~/.bashrc
-        echo 'source "#{opt_libexec}/ww.sh"' >> ~/.bashrc
+        eval "$("#{opt_bin}/ww-helper" init bash)"
     EOS
   end
 

@@ -18,18 +18,18 @@ brew install ww
 For Zsh:
 
 ```bash
-echo 'export WW_HELPER_BIN="$(brew --prefix ww)/bin/ww-helper"' >> ~/.zshrc
-echo 'source "$(brew --prefix ww)/libexec/ww.sh"' >> ~/.zshrc
+printf 'eval "$("%s/bin/ww-helper" init zsh)"\n' "$(brew --prefix ww)" >> ~/.zshrc
 source ~/.zshrc
 ```
 
 For Bash:
 
 ```bash
-echo 'export WW_HELPER_BIN="$(brew --prefix ww)/bin/ww-helper"' >> ~/.bashrc
-echo 'source "$(brew --prefix ww)/libexec/ww.sh"' >> ~/.bashrc
+printf 'eval "$("%s/bin/ww-helper" init bash)"\n' "$(brew --prefix ww)" >> ~/.bashrc
 source ~/.bashrc
 ```
+
+`ww-helper init zsh` and `ww-helper init bash` print the activation snippet if you want to inspect it before adding it to your shell rc file.
 
 ### One-Line Install
 
