@@ -6,6 +6,31 @@ Use [the README](../README.md) for the product overview and demo. This page keep
 
 For the best interactive workflow, install `fzf`. If `fzf` is not available, `ww` falls back to the built-in arrow-key selector automatically.
 
+### Homebrew Tap
+
+Homebrew installs the helper and shell library, but leaves shell activation to you.
+
+```bash
+brew tap unix2dos/ww https://github.com/unix2dos/ww
+brew install ww
+```
+
+For Zsh:
+
+```bash
+printf 'eval "$("%s/bin/ww-helper" init zsh)"\n' "$(brew --prefix ww)" >> ~/.zshrc
+source ~/.zshrc
+```
+
+For Bash:
+
+```bash
+printf 'eval "$("%s/bin/ww-helper" init bash)"\n' "$(brew --prefix ww)" >> ~/.bashrc
+source ~/.bashrc
+```
+
+`ww-helper init zsh` and `ww-helper init bash` print the activation snippet if you want to inspect it before adding it to your shell rc file.
+
 ### One-Line Install
 
 Install the latest release for your current platform:
@@ -352,6 +377,16 @@ Artifacts are written to `dist/`:
 - `ww-vX.Y.Z-linux-amd64.tar.gz`
 - `checksums.txt`
 - `install-release.sh`
+- `ww.rb`
+
+Refresh the committed Homebrew formula after a release is published:
+
+```bash
+bash scripts/generate-homebrew-formula.sh vX.Y.Z Formula/ww.rb
+git add Formula/ww.rb
+git commit -m "chore: update Homebrew formula for vX.Y.Z"
+git push origin main
+```
 
 To publish a GitHub Release, create and push a tag matching `v*`:
 
@@ -362,4 +397,4 @@ git push origin vX.Y.Z
 
 GitHub release publishing is wired through `.github/workflows/release.yml` and only publishes when the workflow runs for `refs/tags/v*`.
 
-Manual `workflow_dispatch` runs still build the `dist/` artifacts, but they do not publish a GitHub Release.
+Manual `workflow_dispatch` runs still build the `dist/` artifacts, including `ww.rb`, but they do not publish a GitHub Release.

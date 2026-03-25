@@ -37,6 +37,9 @@ func TestRunHelperHelpPrintsUsageAndExitsZero(t *testing.T) {
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("new-path")) {
 		t.Fatalf("expected help to mention new-path, got %q", got)
 	}
+	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("init")) {
+		t.Fatalf("expected help to mention init, got %q", got)
+	}
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("check")) {
 		t.Fatalf("expected help to mention check, got %q", got)
 	}
@@ -54,6 +57,96 @@ func TestRunHelperHelpPrintsUsageAndExitsZero(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunInitPrintsShellSetupForLibexecLayout(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	root := t.TempDir()
+	helperPath := filepath.Join(root, "bin", "ww-helper")
+	shellPath := filepath.Join(root, "libexec", "ww.sh")
+	if err := os.MkdirAll(filepath.Dir(shellPath), 0o755); err != nil {
+		t.Fatalf("mkdir libexec: %v", err)
+	}
+	if err := os.WriteFile(shellPath, []byte("ww() { :; }\n"), 0o644); err != nil {
+		t.Fatalf("write ww.sh: %v", err)
+	}
+
+	restoreExecutablePath := executablePath
+	restoreEvalSymlinks := evalSymlinks
+	executablePath = func() (string, error) { return helperPath, nil }
+	evalSymlinks = func(path string) (string, error) { return path, nil }
+	defer func() {
+		executablePath = restoreExecutablePath
+		evalSymlinks = restoreEvalSymlinks
+	}()
+
+	code := Run(context.Background(), []string{"init", "zsh"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "WW_HELPER_BIN='"+helperPath+"'") {
+		t.Fatalf("expected helper path in init output, got %q", got)
+	}
+	if got := stdout.String(); !strings.Contains(got, "source '"+shellPath+"'") {
+		t.Fatalf("expected libexec ww.sh path in init output, got %q", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunInitPrintsShellSetupForSiblingLayout(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	root := t.TempDir()
+	helperPath := filepath.Join(root, "bin", "ww-helper")
+	shellPath := filepath.Join(root, "bin", "ww.sh")
+	if err := os.MkdirAll(filepath.Dir(shellPath), 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	if err := os.WriteFile(shellPath, []byte("ww() { :; }\n"), 0o644); err != nil {
+		t.Fatalf("write ww.sh: %v", err)
+	}
+
+	restoreExecutablePath := executablePath
+	restoreEvalSymlinks := evalSymlinks
+	executablePath = func() (string, error) { return helperPath, nil }
+	evalSymlinks = func(path string) (string, error) { return path, nil }
+	defer func() {
+		executablePath = restoreExecutablePath
+		evalSymlinks = restoreEvalSymlinks
+	}()
+
+	code := Run(context.Background(), []string{"init", "bash"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "source '"+shellPath+"'") {
+		t.Fatalf("expected sibling ww.sh path in init output, got %q", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunInitRejectsUnsupportedShell(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"init", "fish"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), `unsupported shell: "fish"`) {
+		t.Fatalf("expected unsupported-shell message, got %q", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout output, got %q", stdout.String())
 	}
 }
 

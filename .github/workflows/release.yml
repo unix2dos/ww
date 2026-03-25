@@ -35,3 +35,4 @@ jobs:
             dist/*.tar.gz
             dist/checksums.txt
             dist/install-release.sh
+            dist/ww.rb

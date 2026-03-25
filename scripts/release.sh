@@ -12,7 +12,7 @@ usage() {
 Usage: bash scripts/release.sh <version>
 
 Builds release tarballs in dist/ (or WT_RELEASE_OUT_DIR) for the configured
-WT_RELEASE_TARGETS matrix.
+WT_RELEASE_TARGETS matrix and generates a matching Homebrew formula artifact.
 EOF
 }
 
@@ -20,7 +20,7 @@ EOF
 VERSION="$1"
 
 mkdir -p "$OUT_DIR"
-rm -f "$OUT_DIR"/ww-"$VERSION"-*.tar.gz "$OUT_DIR"/checksums.txt "$OUT_DIR"/install-release.sh
+rm -f "$OUT_DIR"/ww-"$VERSION"-*.tar.gz "$OUT_DIR"/checksums.txt "$OUT_DIR"/install-release.sh "$OUT_DIR"/ww.rb
 
 cd "$REPO_ROOT"
 
@@ -58,6 +58,20 @@ elif command -v shasum >/dev/null 2>&1; then
     cd "$OUT_DIR"
     shasum -a 256 ww-"$VERSION"-*.tar.gz > checksums.txt
   )
+elif command -v openssl >/dev/null 2>&1; then
+  (
+    cd "$OUT_DIR"
+    : > checksums.txt
+    for archive in ww-"$VERSION"-*.tar.gz; do
+      checksum="$(openssl dgst -sha256 -r "$archive" | awk '{print $1}')"
+      printf '%s  %s\n' "$checksum" "$archive" >> checksums.txt
+    done
+  )
+else
+  echo "missing required checksum command: sha256sum, shasum, or openssl" >&2
+  exit 1
 fi
+
+WT_HOMEBREW_CHECKSUMS_PATH="$OUT_DIR/checksums.txt" bash "$SCRIPT_DIR/generate-homebrew-formula.sh" "$VERSION" "$OUT_DIR/ww.rb"
 
 printf 'Release artifacts written to %s\n' "$OUT_DIR"

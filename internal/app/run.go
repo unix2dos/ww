@@ -49,6 +49,9 @@ func (e appError) Error() string {
 
 type RealDeps struct{}
 
+var executablePath = os.Executable
+var evalSymlinks = filepath.EvalSymlinks
+
 var defaultStateStore struct {
 	once  sync.Once
 	store *state.Store
@@ -143,6 +146,8 @@ func Run(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut
 	case "--help", "-h", "help":
 		printHelperHelp(out)
 		return 0
+	case "init":
+		return runInit(args[1:], out, errOut)
 	case "switch-path":
 		return runSwitchPath(ctx, args[1:], in, out, errOut, deps)
 	case "new-path":
@@ -158,6 +163,30 @@ func Run(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut
 	default:
 		return runSwitchPath(ctx, args, in, out, errOut, deps)
 	}
+}
+
+func runInit(args []string, out io.Writer, errOut io.Writer) int {
+	if len(args) != 1 {
+		fmt.Fprintln(errOut, "usage: ww-helper init <zsh|bash>")
+		return 2
+	}
+
+	switch args[0] {
+	case "zsh", "bash":
+	default:
+		fmt.Fprintf(errOut, "unsupported shell: %q\n", args[0])
+		return 2
+	}
+
+	helperPath, shellPath, err := resolveInitPaths()
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
+
+	fmt.Fprintf(out, "WW_HELPER_BIN=%s\n", shellQuote(helperPath))
+	fmt.Fprintf(out, "source %s\n", shellQuote(shellPath))
+	return 0
 }
 
 func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut io.Writer, deps Deps) int {
@@ -1696,14 +1725,45 @@ func warnStateIssue(errOut io.Writer, err error) {
 	fmt.Fprintln(errOut, err)
 }
 
+func resolveInitPaths() (string, string, error) {
+	execPath, err := executablePath()
+	if err != nil {
+		return "", "", fmt.Errorf("resolve ww-helper path: %w", err)
+	}
+
+	resolvedExecPath, err := evalSymlinks(execPath)
+	if err != nil {
+		resolvedExecPath = execPath
+	}
+	resolvedExecPath = filepath.Clean(resolvedExecPath)
+
+	candidates := []string{
+		filepath.Join(filepath.Dir(resolvedExecPath), "ww.sh"),
+		filepath.Join(filepath.Dir(resolvedExecPath), "..", "libexec", "ww.sh"),
+	}
+	for _, candidate := range candidates {
+		info, statErr := os.Stat(candidate)
+		if statErr == nil && !info.IsDir() {
+			return resolvedExecPath, filepath.Clean(candidate), nil
+		}
+	}
+
+	return "", "", fmt.Errorf("resolve ww.sh path relative to %s: file not found", resolvedExecPath)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
 func printHelperHelp(out io.Writer) {
-	fmt.Fprintln(out, "Usage: ww-helper [switch-path|list|check|new-path|gc|rm|help|--help]")
+	fmt.Fprintln(out, "Usage: ww-helper [switch-path|list|check|new-path|init|gc|rm|help|--help]")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "switch-path prints the selected git worktree path.")
 	fmt.Fprintln(out, "Interactive switch uses fzf when available, otherwise the built-in selector.")
 	fmt.Fprintln(out, "list prints the current worktree table.")
 	fmt.Fprintln(out, "check prints the current worktree safety summary.")
 	fmt.Fprintln(out, "new-path creates a worktree and prints its path.")
+	fmt.Fprintln(out, "init prints shell code that activates ww for zsh or bash.")
 	fmt.Fprintln(out, "gc evaluates explicit cleanup rules and prints matched worktrees.")
 	fmt.Fprintln(out, "rm removes a worktree and optionally deletes its merged branch.")
 	fmt.Fprintln(out, "help prints this command summary.")
