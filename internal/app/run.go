@@ -590,20 +590,9 @@ type removeConfig struct {
 }
 
 type removalCandidate struct {
-	item             worktree.Worktree
-	preview          git.RemovalPreview
-	taskLabel        string
-	taskIntent       string
-	boundaryWarnings []string
+	item    worktree.Worktree
+	preview git.RemovalPreview
 }
-
-type removalSeverity int
-
-const (
-	removalSeveritySafe removalSeverity = iota
-	removalSeverityReview
-	removalSeverityStop
-)
 
 func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut io.Writer, deps Deps) int {
 	cfg, err := parseRemoveArgs(args)
@@ -611,12 +600,27 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
 
-	_, items, metadata, warn, err := orderedWorktrees(ctx, deps)
+	_, items, _, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
 		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
 	if !cfg.json {
 		warnStateIssue(errOut, warn)
+	}
+
+	// Check if target is the current worktree before filtering
+	if cfg.target != "" {
+		if selected, matchErr := worktree.Match(items, cfg.target); matchErr == nil && selected.IsCurrent {
+			if cfg.json {
+				return writeCommandError("rm", out, errOut, true, appError{
+					Code:     "REMOVE_CURRENT",
+					Message:  "Cannot remove the current worktree. Switch first: ww go <name>",
+					ExitCode: 1,
+				})
+			}
+			fmt.Fprintln(errOut, "Cannot remove the current worktree. Switch first: ww go <name>")
+			return 1
+		}
 	}
 
 	candidates := filterNonCurrent(items)
@@ -628,12 +632,9 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		})
 	}
 
-	baseBranch := ""
-	if baseBranch == "" {
-		baseBranch, err = deps.DefaultBranch(ctx)
-		if err != nil {
-			return writeCommandError("rm", out, errOut, cfg.json, err)
-		}
+	baseBranch, err := deps.DefaultBranch(ctx)
+	if err != nil {
+		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
 
 	previewed := make([]removalCandidate, 0, len(candidates))
@@ -642,17 +643,18 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		if err != nil {
 			return writeCommandError("rm", out, errOut, cfg.json, err)
 		}
-		previewed = append(previewed, enrichRemovalCandidate(ctx, deps, item, preview, metadata[item.Path]))
+		previewed = append(previewed, removalCandidate{item: item, preview: preview})
 	}
 
+	// Select target
 	selected := removalCandidate{}
 	if cfg.json {
 		selected, err = selectRemovalCandidateNonInteractive(items, previewed, cfg.target)
 		if err != nil {
-			return writeCommandError("rm", out, errOut, cfg.json, err)
+			return writeCommandError("rm", out, errOut, true, err)
 		}
-		if removalSeverityFor(selected.preview, cfg.force) == removalSeverityStop {
-			return writeCommandError("rm", out, errOut, cfg.json, appError{
+		if selected.preview.Dirty && !cfg.force {
+			return writeCommandError("rm", out, errOut, true, appError{
 				Code:     "WORKTREE_DIRTY",
 				Message:  "worktree has uncommitted changes; rerun with --force",
 				ExitCode: 1,
@@ -660,19 +662,37 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		}
 	} else {
 		reader := bufio.NewReader(in)
-		var ok bool
-		var exitCode int
-		selected, ok, exitCode = selectRemovalCandidate(reader, errOut, previewed, cfg.target, cfg.force)
-		if !ok {
-			return exitCode
+
+		if cfg.target != "" {
+			selected, err = matchRemovalCandidate(previewed, cfg.target)
+			if err != nil {
+				fmt.Fprintln(errOut, err)
+				return 2
+			}
+		} else if len(previewed) == 1 {
+			selected = previewed[0]
+		} else {
+			renderRemovalCandidates(errOut, previewed)
+			index, err := readChoice(reader, errOut, "\n> ", len(previewed), 0)
+			if err != nil {
+				return writeSelectionError(errOut, err)
+			}
+			selected = previewed[index-1]
 		}
 
-		renderRemovalSummary(errOut, selected, cfg.force)
-		if removalSeverityFor(selected.preview, cfg.force) == removalSeverityStop {
+		label := removalCandidateLabel(selected.item)
+		if selected.preview.Dirty && !cfg.force {
+			fmt.Fprintf(errOut, "%s has uncommitted changes. Use --force to remove.\n", label)
 			return 1
 		}
 
-		confirmed, err := confirmPrompt(reader, errOut, "Delete this worktree? [y/N]: ")
+		var prompt string
+		if selected.preview.Dirty && cfg.force {
+			prompt = fmt.Sprintf("Remove %s? Uncommitted changes will be lost. [y/N] ", label)
+		} else {
+			prompt = fmt.Sprintf("Remove %s? [y/N] ", label)
+		}
+		confirmed, err := confirmPrompt(reader, errOut, prompt)
 		if err != nil {
 			return writeSelectionError(errOut, err)
 		}
@@ -693,71 +713,6 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		return writeJSONSuccess(out, "rm", removeJSONPayload(result))
 	}
 	writeRemoveHuman(out, result)
-	return 0
-}
-
-func runRemoveCleanup(ctx context.Context, cfg removeConfig, in io.Reader, out io.Writer, errOut io.Writer, deps Deps, candidates []removalCandidate, baseBranch string) int {
-	if len(candidates) == 0 {
-		return writeCommandError("rm", out, errOut, false, appError{
-			Code:     "WORKTREE_NOT_FOUND",
-			Message:  "no removable worktrees available",
-			ExitCode: 1,
-		})
-	}
-
-	reader := bufio.NewReader(in)
-	fmt.Fprintln(errOut, "Cleanup mode: review workspaces and remove the ones you no longer need.")
-
-	remaining := append([]removalCandidate(nil), candidates...)
-	removedCount := 0
-	for len(remaining) > 0 {
-		writeCleanupOverview(errOut, remaining, cfg.force)
-		selected, ok, exitCode := selectCleanupCandidate(reader, errOut, remaining, cfg.force)
-		if !ok {
-			if exitCode == 0 {
-				writeCleanupSummary(errOut, removedCount, len(remaining))
-			}
-			return exitCode
-		}
-
-		renderRemovalSummary(errOut, selected, cfg.force)
-		if removalSeverityFor(selected.preview, cfg.force) == removalSeverityStop {
-			if err := pausePrompt(reader, errOut, "Press Enter to return to cleanup list: "); err != nil {
-				return writeSelectionError(errOut, err)
-			}
-			if len(remaining) > 0 {
-				fmt.Fprintln(errOut)
-			}
-			continue
-		}
-
-		confirmed, err := confirmPrompt(reader, errOut, "Delete this worktree? [y/N]: ")
-		if err != nil {
-			return writeSelectionError(errOut, err)
-		}
-		if !confirmed {
-			if len(remaining) > 0 {
-				fmt.Fprintln(errOut)
-			}
-			continue
-		}
-
-		result, err := deps.RemoveWorktree(ctx, selected.item, git.RemoveOptions{
-			BaseBranch: baseBranch,
-			Force:      cfg.force,
-		})
-		if err != nil {
-			return writeCommandError("rm", out, errOut, false, err)
-		}
-		writeRemoveHuman(out, result)
-		removedCount++
-		remaining = removeCandidateByPath(remaining, selected.item.Path)
-		if len(remaining) > 0 {
-			fmt.Fprintln(errOut)
-		}
-	}
-
-	writeCleanupSummary(errOut, removedCount, 0)
 	return 0
 }
 
@@ -1150,142 +1105,22 @@ func matchRemovalCandidate(candidates []removalCandidate, target string) (remova
 	return byPath[selected.Path], nil
 }
 
-func selectRemovalCandidate(reader *bufio.Reader, errOut io.Writer, candidates []removalCandidate, target string, force bool) (removalCandidate, bool, int) {
-	if target != "" {
-		selected, err := matchRemovalCandidate(candidates, target)
-		if err != nil {
-			fmt.Fprintln(errOut, err)
-			return removalCandidate{}, false, 2
-		}
-		return selected, true, 0
-	}
-
-	display := orderedRemovalCandidates(candidates, force)
-	renderRemovalCandidates(errOut, display, force)
-	index, err := readChoice(reader, errOut, "Select worktree to remove [number]: ", len(display), 0)
-	if err != nil {
-		return removalCandidate{}, false, writeSelectionError(errOut, err)
-	}
-	return display[index-1], true, 0
-}
-
-func selectCleanupCandidate(reader *bufio.Reader, errOut io.Writer, candidates []removalCandidate, force bool) (removalCandidate, bool, int) {
-	display := orderedRemovalCandidates(candidates, force)
-	renderRemovalCandidates(errOut, display, force)
-
-	for {
-		fmt.Fprint(errOut, "Select a workspace to review [number, Enter to finish]: ")
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return removalCandidate{}, false, writeSelectionError(errOut, err)
-		}
-
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			return removalCandidate{}, false, 0
-		}
-
-		index, convErr := strconv.Atoi(trimmed)
-		if convErr != nil || index <= 0 || index > len(display) {
-			fmt.Fprintf(errOut, "invalid selection: %q\n", trimmed)
-			if errors.Is(err, io.EOF) {
-				return removalCandidate{}, false, 0
-			}
-			continue
-		}
-		return display[index-1], true, 0
-	}
-}
-
-func orderedRemovalCandidates(candidates []removalCandidate, force bool) []removalCandidate {
-	ordered := make([]removalCandidate, 0, len(candidates))
-	for _, severity := range []removalSeverity{removalSeveritySafe, removalSeverityReview, removalSeverityStop} {
-		for _, candidate := range candidates {
-			if removalSeverityFor(candidate.preview, force) == severity {
-				ordered = append(ordered, candidate)
-			}
+func renderRemovalCandidates(w io.Writer, candidates []removalCandidate) {
+	fmt.Fprintln(w, "Remove which worktree?")
+	fmt.Fprintln(w)
+	hasDirty := false
+	for i, c := range candidates {
+		label := removalCandidateLabel(c.item)
+		if c.preview.Dirty {
+			fmt.Fprintf(w, "  %d  %s  ●\n", i+1, label)
+			hasDirty = true
+		} else {
+			fmt.Fprintf(w, "  %d  %s\n", i+1, label)
 		}
 	}
-	return ordered
-}
-
-func removeCandidateByPath(candidates []removalCandidate, path string) []removalCandidate {
-	out := make([]removalCandidate, 0, len(candidates))
-	for _, candidate := range candidates {
-		if candidate.item.Path == path {
-			continue
-		}
-		out = append(out, candidate)
-	}
-	return out
-}
-
-func renderRemovalCandidates(w io.Writer, candidates []removalCandidate, force bool) {
-	count := 0
-	for _, severity := range []removalSeverity{removalSeveritySafe, removalSeverityReview, removalSeverityStop} {
-		group := filterRemovalCandidatesBySeverity(candidates, severity, force)
-		if len(group) == 0 {
-			continue
-		}
-		if count > 0 {
-			fmt.Fprintln(w)
-		}
-		fmt.Fprintln(w, removalSeverityHeading(severity))
-		for _, candidate := range group {
-			count++
-			label := removalCandidateLabel(candidate.item)
-			reason := removalCandidateReason(candidate.preview, force)
-			if reason == "" {
-				fmt.Fprintf(w, "[%d] %s %s\n", count, removalSeverityIcon(severity), label)
-				fmt.Fprintf(w, "    %s\n", candidate.item.Path)
-				continue
-			}
-			fmt.Fprintf(w, "[%d] %s %s  %s\n", count, removalSeverityIcon(severity), label, reason)
-			fmt.Fprintf(w, "    %s\n", candidate.item.Path)
-		}
-	}
-}
-
-func filterRemovalCandidatesBySeverity(candidates []removalCandidate, severity removalSeverity, force bool) []removalCandidate {
-	group := make([]removalCandidate, 0, len(candidates))
-	for _, candidate := range candidates {
-		if removalSeverityFor(candidate.preview, force) == severity {
-			group = append(group, candidate)
-		}
-	}
-	return group
-}
-
-func removalSeverityFor(preview git.RemovalPreview, force bool) removalSeverity {
-	switch {
-	case preview.Dirty && !force:
-		return removalSeverityStop
-	case !preview.Dirty && preview.DeleteBranch:
-		return removalSeveritySafe
-	default:
-		return removalSeverityReview
-	}
-}
-
-func removalSeverityHeading(severity removalSeverity) string {
-	switch severity {
-	case removalSeveritySafe:
-		return "Safe to delete"
-	case removalSeverityStop:
-		return "Not safe to delete"
-	default:
-		return "Review before deleting"
-	}
-}
-
-func removalSeverityIcon(severity removalSeverity) string {
-	switch severity {
-	case removalSeveritySafe:
-		return "✅"
-	case removalSeverityStop:
-		return "🛑"
-	default:
-		return "⚠️"
+	if hasDirty {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "● uncommitted changes")
 	}
 }
 
@@ -1294,151 +1129,6 @@ func removalCandidateLabel(item worktree.Worktree) string {
 		return item.BranchLabel
 	}
 	return filepath.Base(item.Path)
-}
-
-func removalCandidateReason(preview git.RemovalPreview, force bool) string {
-	switch {
-	case preview.Dirty && !force:
-		return "Contains uncommitted changes"
-	case preview.Dirty:
-		return "Will discard uncommitted changes"
-	case preview.Worktree.BranchLabel == preview.BaseBranch && preview.Worktree.BranchRef != "":
-		return "Base branch will be kept"
-	case preview.Worktree.BranchRef == "":
-		return "Not on a branch"
-	case !preview.BranchMerged:
-		return "Branch will be kept"
-	default:
-		return ""
-	}
-}
-
-func renderRemovalSummary(w io.Writer, candidate removalCandidate, force bool) {
-	severity := removalSeverityFor(candidate.preview, force)
-	label := removalCandidateLabel(candidate.item)
-
-	fmt.Fprintf(w, "Selected: %s\n\n", label)
-	fmt.Fprintf(w, "%s %s\n", removalSeverityIcon(severity), removalSummaryTitle(severity))
-
-	renderSummarySection(w, "Workspace context:", removalTaskContext(candidate))
-	renderSummarySection(w, "Will remove:", removalWillRemove(candidate.preview))
-	renderSummarySection(w, "Will keep:", removalWillKeep(candidate.preview))
-	renderSummarySection(w, "Will not remove:", removalWillNotRemove(candidate.preview))
-	renderSummarySection(w, "Risk:", removalRiskItems(candidate.preview, force))
-	renderSummarySection(w, "Boundary warning:", candidate.boundaryWarnings)
-	renderSummarySection(w, "Next step:", removalNextSteps(candidate.preview, force))
-}
-
-func enrichRemovalCandidate(ctx context.Context, deps Deps, item worktree.Worktree, preview git.RemovalPreview, meta state.WorktreeMetadata) removalCandidate {
-	candidate := removalCandidate{
-		item:      item,
-		preview:   preview,
-		taskLabel: meta.Label,
-	}
-
-	if candidate.taskLabel == "" {
-		candidate.boundaryWarnings = append(candidate.boundaryWarnings, "no saved workspace context")
-	} else {
-		note, err := readTaskNote(ctx, deps, item.Path, candidate.taskLabel)
-		switch {
-		case err == nil:
-			candidate.taskIntent = note.Intent
-		case errors.Is(err, os.ErrNotExist):
-			candidate.boundaryWarnings = append(candidate.boundaryWarnings, "saved workspace context could not be read")
-		default:
-			candidate.boundaryWarnings = append(candidate.boundaryWarnings, fmt.Sprintf("saved workspace context could not be read: %v", err))
-		}
-	}
-
-	if item.BranchRef == "" {
-		candidate.boundaryWarnings = append(candidate.boundaryWarnings, "this workspace is detached from a branch")
-	}
-
-	return candidate
-}
-
-func removalTaskContext(candidate removalCandidate) []string {
-	items := make([]string, 0, 2)
-	if candidate.taskIntent != "" {
-		items = append(items, candidate.taskIntent)
-	} else if candidate.taskLabel != "" {
-		items = append(items, "saved notes available")
-	}
-	return items
-}
-
-func removalSummaryTitle(severity removalSeverity) string {
-	switch severity {
-	case removalSeveritySafe:
-		return "Safe to delete"
-	case removalSeverityStop:
-		return "Not safe to delete"
-	default:
-		return "Review before deleting"
-	}
-}
-
-func renderSummarySection(w io.Writer, title string, items []string) {
-	if len(items) == 0 {
-		return
-	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, title)
-	for _, item := range items {
-		fmt.Fprintf(w, "- %s\n", item)
-	}
-}
-
-func removalWillRemove(preview git.RemovalPreview) []string {
-	items := []string{fmt.Sprintf("worktree directory %s", preview.Worktree.Path)}
-	if preview.DeleteBranch {
-		items = append(items, fmt.Sprintf("branch %s (already merged into %s)", removalCandidateLabel(preview.Worktree), preview.BaseBranch))
-	}
-	return items
-}
-
-func removalWillKeep(preview git.RemovalPreview) []string {
-	switch {
-	case preview.Worktree.BranchRef == "":
-		return []string{"no branch will be deleted"}
-	case preview.Worktree.BranchLabel == preview.BaseBranch:
-		return []string{fmt.Sprintf("branch %s (not deleted because it is the base branch)", removalCandidateLabel(preview.Worktree))}
-	case !preview.BranchMerged:
-		return []string{fmt.Sprintf("branch %s (not merged into %s)", removalCandidateLabel(preview.Worktree), preview.BaseBranch)}
-	default:
-		return nil
-	}
-}
-
-func removalWillNotRemove(preview git.RemovalPreview) []string {
-	if preview.DeleteBranch {
-		return []string{fmt.Sprintf("commits already merged into %s", preview.BaseBranch)}
-	}
-	return nil
-}
-
-func removalRiskItems(preview git.RemovalPreview, force bool) []string {
-	items := make([]string, 0, 2)
-	switch {
-	case preview.Dirty && force:
-		items = append(items, "uncommitted changes will be lost")
-	case preview.Dirty:
-		items = append(items, "uncommitted changes detected")
-	}
-	if preview.Worktree.BranchRef == "" {
-		items = append(items, "this worktree is not on a branch")
-	}
-	return items
-}
-
-func removalNextSteps(preview git.RemovalPreview, force bool) []string {
-	if preview.Dirty && !force {
-		return []string{
-			"commit or stash your changes",
-			"rerun with --force to discard them",
-		}
-	}
-	return nil
 }
 
 func readChoice(reader *bufio.Reader, errOut io.Writer, prompt string, max int, defaultIndex int) (int, error) {
@@ -1483,64 +1173,18 @@ func confirmPrompt(reader *bufio.Reader, errOut io.Writer, prompt string) (bool,
 	return answer == "y" || answer == "yes", nil
 }
 
-func pausePrompt(reader *bufio.Reader, errOut io.Writer, prompt string) error {
-	fmt.Fprint(errOut, prompt)
-	_, err := reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return err
-	}
-	return nil
-}
-
-func writeCleanupOverview(out io.Writer, candidates []removalCandidate, force bool) {
-	safe, review, blocked := cleanupCounts(candidates, force)
-	total := len(candidates)
-	fmt.Fprintf(out, "%d workspace%s available: %d safe, %d review, %d blocked.\n",
-		total, pluralize(total), safe, review, blocked)
-}
-
-func writeCleanupSummary(out io.Writer, removedCount int, remainingCount int) {
-	var summary string
-	if removedCount == 0 {
-		summary = "Cleanup finished. No workspaces removed."
-	} else {
-		summary = fmt.Sprintf("Cleanup finished. Removed %d workspace%s.", removedCount, pluralize(removedCount))
-	}
-	if remainingCount > 0 {
-		summary = fmt.Sprintf("%s %d workspace%s still listed.", summary, remainingCount, pluralize(remainingCount))
-	}
-	fmt.Fprintln(out, summary)
-}
-
-func cleanupCounts(candidates []removalCandidate, force bool) (safe int, review int, blocked int) {
-	for _, candidate := range candidates {
-		switch removalSeverityFor(candidate.preview, force) {
-		case removalSeveritySafe:
-			safe++
-		case removalSeverityStop:
-			blocked++
-		default:
-			review++
-		}
-	}
-	return safe, review, blocked
-}
-
-func pluralize(count int) string {
-	if count == 1 {
-		return ""
-	}
-	return "s"
-}
-
 func writeRemoveHuman(out io.Writer, result git.RemoveResult) {
-	fmt.Fprintf(out, "removed worktree %s\n", result.WorktreePath)
-	if result.DeletedBranch {
-		fmt.Fprintf(out, "deleted branch %s\n", result.Branch)
-		return
+	label := result.Branch
+	if label == "" {
+		label = filepath.Base(result.WorktreePath)
 	}
-	if result.Branch != "" && result.KeptBranchReason != "" {
-		fmt.Fprintf(out, "kept branch %s (%s)\n", result.Branch, result.KeptBranchReason)
+	switch {
+	case result.DeletedBranch:
+		fmt.Fprintf(out, "Removed %s (branch deleted)\n", label)
+	case result.Branch != "" && result.KeptBranchReason != "":
+		fmt.Fprintf(out, "Removed %s (branch kept, %s)\n", label, result.KeptBranchReason)
+	default:
+		fmt.Fprintf(out, "Removed %s\n", label)
 	}
 }
 
