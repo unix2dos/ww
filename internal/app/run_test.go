@@ -40,9 +40,6 @@ func TestRunHelperHelpPrintsUsageAndExitsZero(t *testing.T) {
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("init")) {
 		t.Fatalf("expected help to mention init, got %q", got)
 	}
-	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("check")) {
-		t.Fatalf("expected help to mention check, got %q", got)
-	}
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("rm")) {
 		t.Fatalf("expected help to mention rm, got %q", got)
 	}
@@ -600,7 +597,7 @@ func TestRunNewPathLabelCreatesTaskNote(t *testing.T) {
 		worktreeGitPathCall: gitPath,
 	}
 
-	code := Run(context.Background(), []string{"new-path", "--label", "task:fix-login", "alpha"}, bytes.NewReader(nil), stdout, stderr, deps)
+	code := Run(context.Background(), []string{"new-path", "--label", "task:fix-login", "-m", "Fix the login redirect loop", "alpha"}, bytes.NewReader(nil), stdout, stderr, deps)
 
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)
@@ -628,8 +625,39 @@ func TestRunNewPathLabelCreatesTaskNote(t *testing.T) {
 	if note.CreatedAt.IsZero() {
 		t.Fatalf("expected created_at to be set, got %#v", note)
 	}
+	if note.Intent != "Fix the login redirect loop" {
+		t.Fatalf("expected intent %q, got %q", "Fix the login redirect loop", note.Intent)
+	}
 	if !strings.Contains(note.Body, "Created by ww.") {
 		t.Fatalf("expected scaffold body in note, got %q", note.Body)
+	}
+}
+
+func TestRunNewPathLabelWithoutMessageHasNoIntent(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	gitPath := &gitPathCall{}
+	notePath := filepath.Join(t.TempDir(), "git-private", "ww", "task-note.md")
+	deps := fakeDeps{
+		createPath:          "/repo/.worktrees/alpha",
+		repoKey:             "/repo/.git",
+		touched:             &touchRecord{},
+		recorded:            &recordWorktreeCall{},
+		worktreeGitPath:     notePath,
+		worktreeGitPathCall: gitPath,
+	}
+
+	code := Run(context.Background(), []string{"new-path", "--label", "task:fix-login", "alpha"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	note, err := tasknote.ReadFile(notePath)
+	if err != nil {
+		t.Fatalf("expected task note to be readable: %v", err)
+	}
+	if note.Intent != "" {
+		t.Fatalf("expected empty intent without -m flag, got %q", note.Intent)
 	}
 }
 
@@ -810,6 +838,45 @@ func TestRunListVerboseShowsLabelAndTTL(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunListVerboseShowsIntent(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	notePath := filepath.Join(t.TempDir(), "git-private", "ww", "task-note.md")
+	if err := tasknote.WriteFile(notePath, tasknote.Note{
+		TaskLabel: "task:fix-login",
+		Branch:    "alpha",
+		CreatedAt: time.Date(2026, 3, 24, 12, 34, 56, 0, time.UTC),
+		Intent:    "Fix the login redirect loop",
+		Body:      "Created by ww.",
+	}); err != nil {
+		t.Fatalf("write note: %v", err)
+	}
+	deps := fakeDeps{
+		repoKey: "/repo/.git",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", CreatedAt: 20},
+		},
+		metadata: map[string]map[string]state.WorktreeMetadata{
+			"/repo/.git": {
+				"/repo/.worktrees/alpha": {
+					Label: "task:fix-login",
+				},
+			},
+		},
+		worktreeGitPath: notePath,
+	}
+
+	code := Run(context.Background(), []string{"list", "--verbose"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "intent=Fix the login") {
+		t.Fatalf("expected intent in verbose output, got %q", out)
 	}
 }
 

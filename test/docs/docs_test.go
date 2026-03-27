@@ -44,9 +44,6 @@ func TestPagesDemoContract(t *testing.T) {
 	if !strings.Contains(readme, "ww new feat-demo") {
 		t.Fatalf("expected README to document simple worktree creation")
 	}
-	if !strings.Contains(readme, "ww check") {
-		t.Fatalf("expected README to document ww check")
-	}
 	if !strings.Contains(readme, "ww rm --cleanup") {
 		t.Fatalf("expected README to document human cleanup mode")
 	}
@@ -73,10 +70,9 @@ func TestPagesDemoContract(t *testing.T) {
 		"## Release",
 		"`ww help` or `ww --help` prints the command summary.",
 		"### For AI Agents",
-		"ww check",
 		"ww rm --cleanup",
 		"ww-helper rm --json --non-interactive feat-a",
-		"ww-helper new-path --json --label agent:claude-code --ttl 24h feat-a",
+		"ww-helper new-path --json --label agent:claude-code --ttl 24h -m",
 		"ww-helper gc --ttl-expired --idle 7d --dry-run --json",
 		"#### Breaking Change",
 		"[CURRENT]",
@@ -124,7 +120,7 @@ func TestPagesDemoContract(t *testing.T) {
 	if !strings.Contains(indexHTML, "ww Demo") {
 		t.Fatalf("expected Pages demo to show a visible title")
 	}
-	if !strings.Contains(indexHTML, "`fzf` switch, `ww list`, `ww new`, `ww check`, safe removal, cleanup review") {
+	if !strings.Contains(indexHTML, "`fzf` switch, `ww list`, `ww new`, safe removal, cleanup review") {
 		t.Fatalf("expected Pages demo copy to describe the workflow overview")
 	}
 	if !strings.Contains(indexHTML, "`ww-helper --json` tail for automation") {

@@ -154,8 +154,6 @@ func Run(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut
 		return runNewPath(ctx, args[1:], out, errOut, deps)
 	case "list":
 		return runList(ctx, args[1:], out, errOut, deps)
-	case "check":
-		return runCheck(ctx, args[1:], out, errOut, deps)
 	case "gc":
 		return runGC(ctx, args[1:], out, errOut, deps)
 	case "rm":
@@ -342,38 +340,44 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 
 	tableEntries := make([]ui.ListTableEntry, 0, len(entries))
 	for _, entry := range entries {
+		detail := listVerboseDetail(ctx, deps, entry, cfg.verbose)
 		tableEntries = append(tableEntries, ui.ListTableEntry{
 			Worktree: entry.item,
-			Detail:   listVerboseDetail(entry.meta, cfg.verbose),
+			Detail:   detail,
 		})
 	}
 	fmt.Fprintln(out, ui.FormatListTable(tableEntries))
 	return 0
 }
 
-func listVerboseDetail(meta state.WorktreeMetadata, verbose bool) string {
+func listVerboseDetail(ctx context.Context, deps Deps, entry listEntry, verbose bool) string {
 	if !verbose {
 		return ""
 	}
 
-	parts := make([]string, 0, 3)
-	if meta.Label != "" {
-		parts = append(parts, "label="+meta.Label)
+	parts := make([]string, 0, 4)
+	if entry.meta.Label != "" {
+		parts = append(parts, "label="+entry.meta.Label)
+		note, err := readTaskNote(ctx, deps, entry.item.Path, entry.meta.Label)
+		if err == nil && note.Intent != "" {
+			parts = append(parts, "intent="+note.Intent)
+		}
 	}
-	if meta.TTL != "" {
-		parts = append(parts, "ttl="+meta.TTL)
+	if entry.meta.TTL != "" {
+		parts = append(parts, "ttl="+entry.meta.TTL)
 	}
-	if meta.LastUsedAt != 0 {
-		parts = append(parts, fmt.Sprintf("last_used_at=%d", meta.LastUsedAt))
+	if entry.meta.LastUsedAt != 0 {
+		parts = append(parts, fmt.Sprintf("last_used_at=%d", entry.meta.LastUsedAt))
 	}
 	return strings.Join(parts, "  ")
 }
 
 type newPathConfig struct {
-	json  bool
-	name  string
-	label string
-	ttl   string
+	json    bool
+	name    string
+	label   string
+	ttl     string
+	message string
 }
 
 func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Writer, deps Deps) int {
@@ -403,7 +407,7 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 		if err := recordWorktreeStateBestEffort(ctx, deps, repoKey, path, meta); err != nil {
 			return writeCommandError("new-path", out, errOut, cfg.json, err)
 		}
-		if err := createTaskNoteIfLabeled(ctx, deps, path, cfg.name, cfg.label, createdAt); err != nil {
+		if err := createTaskNoteIfLabeled(ctx, deps, path, cfg.name, cfg.label, cfg.message, createdAt); err != nil {
 			return writeCommandError("new-path", out, errOut, cfg.json, err)
 		}
 		if err := touchWorktreeStateBestEffort(ctx, deps, repoKey, path); err != nil {
@@ -417,12 +421,12 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 
 	fmt.Fprintln(out, path)
 	warnStateIssue(errOut, recordWorktreeStateBestEffort(ctx, deps, repoKey, path, meta))
-	warnStateIssue(errOut, createTaskNoteIfLabeled(ctx, deps, path, cfg.name, cfg.label, createdAt))
+	warnStateIssue(errOut, createTaskNoteIfLabeled(ctx, deps, path, cfg.name, cfg.label, cfg.message, createdAt))
 	warnStateIssue(errOut, touchWorktreeStateBestEffort(ctx, deps, repoKey, path))
 	return 0
 }
 
-func createTaskNoteIfLabeled(ctx context.Context, deps Deps, worktreePath, branch, label string, createdAt time.Time) error {
+func createTaskNoteIfLabeled(ctx context.Context, deps Deps, worktreePath, branch, label, message string, createdAt time.Time) error {
 	if label == "" {
 		return nil
 	}
@@ -436,21 +440,24 @@ func createTaskNoteIfLabeled(ctx context.Context, deps Deps, worktreePath, branc
 		TaskLabel: label,
 		Branch:    branch,
 		CreatedAt: createdAt,
-		Intent:    "Fill in what this worktree is trying to accomplish.",
-		Body: strings.Join([]string{
-			"Created by ww.",
-			"",
-			"Why this exists:",
-			"- Keep this task isolated from other parallel work.",
-			"",
-			"Next steps:",
-			"- Fill in what this worktree is trying to accomplish.",
-		}, "\n"),
+		Intent:    message,
+		Body:      "Created by ww.",
 	}
 	if err := tasknote.WriteFile(notePath, note); err != nil {
 		return fmt.Errorf("task note skipped: %w", err)
 	}
 	return nil
+}
+
+func readTaskNote(ctx context.Context, deps Deps, worktreePath, label string) (tasknote.Note, error) {
+	if label == "" {
+		return tasknote.Note{}, fmt.Errorf("task label is required")
+	}
+	notePath, err := deps.WorktreeGitPath(ctx, worktreePath, "ww/task-note.md")
+	if err != nil {
+		return tasknote.Note{}, err
+	}
+	return tasknote.ReadFile(notePath)
 }
 
 type gcConfig struct {
@@ -894,6 +901,14 @@ func parseNewPathArgs(args []string) (newPathConfig, error) {
 			if cfg.label == "" {
 				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "label cannot be empty", ExitCode: 2}
 			}
+		case arg == "--message" || arg == "-m":
+			if i+1 >= len(args) {
+				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --message", ExitCode: 2}
+			}
+			i++
+			cfg.message = strings.TrimSpace(args[i])
+		case strings.HasPrefix(arg, "--message="):
+			cfg.message = strings.TrimSpace(strings.TrimPrefix(arg, "--message="))
 		case arg == "--ttl":
 			if i+1 >= len(args) {
 				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --ttl", ExitCode: 2}
@@ -1756,12 +1771,11 @@ func shellQuote(value string) string {
 }
 
 func printHelperHelp(out io.Writer) {
-	fmt.Fprintln(out, "Usage: ww-helper [switch-path|list|check|new-path|init|gc|rm|help|--help]")
+	fmt.Fprintln(out, "Usage: ww-helper [switch-path|list|new-path|init|gc|rm|help|--help]")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "switch-path prints the selected git worktree path.")
 	fmt.Fprintln(out, "Interactive switch uses fzf when available, otherwise the built-in selector.")
 	fmt.Fprintln(out, "list prints the current worktree table.")
-	fmt.Fprintln(out, "check prints the current worktree safety summary.")
 	fmt.Fprintln(out, "new-path creates a worktree and prints its path.")
 	fmt.Fprintln(out, "init prints shell code that activates ww for zsh or bash.")
 	fmt.Fprintln(out, "gc evaluates explicit cleanup rules and prints matched worktrees.")

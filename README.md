@@ -2,7 +2,7 @@
 
 Fast worktree switching for safer parallel work.
 
-`ww` is a shell-first Git worktree workflow for the current repository. It keeps the fast switch/create/remove loop, then adds a human-readable safety check and an interactive cleanup path so parallel work stays manageable.
+`ww` is a shell-first Git worktree workflow for the current repository. It keeps the fast switch/create/remove loop, then adds an interactive cleanup path so parallel work stays manageable.
 
 ## Demo
 
@@ -13,7 +13,6 @@ The demo is now a workflow overview in about a minute, with a short `ww-helper -
 - switch into an existing worktree with the `fzf` fast path
 - inspect the current workspace set with `ww list`
 - create a fresh branch workspace with `ww new feat-demo`
-- check the active workspace state with `ww check`
 - remove the temporary workspace with safe `ww rm`
 - review stale workspaces with `ww rm --cleanup`
 - end with a quick machine-readable `ww-helper --json` pass
@@ -22,7 +21,7 @@ The demo is now a workflow overview in about a minute, with a short `ww-helper -
 
 - `ww` changes the current shell directory, so switching worktrees feels like changing folders, not launching a side tool.
 - `ww new <name>` creates a fresh branch workspace and moves your shell into it immediately.
-- `ww check` prints the current path, branch, changes, and saved workspace context when available.
+- `ww list` shows all worktrees at a glance; `ww list --verbose` adds labels, intent, and metadata.
 - `ww rm` explains what will be removed, what will be kept, and what looks risky before you confirm.
 - `ww rm --cleanup` lets you review old worktrees and delete the ones you no longer need.
 
@@ -52,7 +51,6 @@ Then try the boundary-safe loop inside any Git repository:
 ww
 ww new feat-demo
 ww list
-ww check
 ww rm feat-demo
 ww rm --cleanup
 ```
@@ -69,7 +67,7 @@ Current machine-readable commands:
 
 ```bash
 ww-helper list --json
-ww-helper new-path --json --label agent:codex --ttl 24h feat-demo
+ww-helper new-path --json --label agent:codex --ttl 24h -m "Fix login redirect" feat-demo
 ww-helper gc --ttl-expired --dry-run --json
 ww-helper rm --json --non-interactive feat-demo
 ```
@@ -80,7 +78,6 @@ Human-facing safety flow:
 
 ```bash
 ww new feat-a
-ww check
 ww rm --cleanup
 ```
 

@@ -105,8 +105,7 @@ If you installed into Bash, reload `~/.bashrc` instead.
 `ww` is a shell function that switches worktrees and changes your current shell directory.
 
 - `ww` or `ww switch` selects a worktree and switches into it.
-- `ww list` prints worktrees without changing directory.
-- `ww check` prints the current worktree safety summary without changing directory.
+- `ww list` prints worktrees without changing directory. `ww list --verbose` adds labels, intent, and metadata.
 - `ww new <name>` creates a new worktree under `./.worktrees/<name>` and switches into it.
 - `ww rm [<name>]` removes a worktree and deletes its branch only when that branch is already merged into the effective base branch.
 - `ww rm --cleanup` opens an interactive cleanup review for old worktrees.
@@ -121,7 +120,7 @@ Current programmatic commands:
 
 ```bash
 ww-helper list --json
-ww-helper new-path --json --label agent:claude-code --ttl 24h feat-a
+ww-helper new-path --json --label agent:claude-code --ttl 24h -m "Fix login redirect" feat-a
 ww-helper gc --ttl-expired --idle 7d --dry-run --json
 ww-helper rm --json --non-interactive feat-a
 ```
@@ -136,7 +135,7 @@ When `ww-helper` covers a workflow, agents should use it instead of scripting ra
 
 For local skill installation guidance, see [Optional Agent Skill Setup](agent-skills.md).
 
-`ww-helper switch-path` remains a path-printing helper. `ww check` is human-readable only in this release; agents should keep using `switch-path` and the JSON subcommands above for machine-readable flows.
+`ww-helper switch-path` remains a path-printing helper; agents should keep using `switch-path` and the JSON subcommands above for machine-readable flows.
 
 #### JSON Envelope
 
@@ -177,14 +176,14 @@ Returns an array of worktrees with:
 - `label`
 - `ttl`
 
-#### `ww-helper new-path --json --label agent:claude-code --ttl 24h feat-a`
+#### `ww-helper new-path --json --label agent:claude-code --ttl 24h -m "Fix login redirect" feat-a`
 
 Returns:
 
 - `worktree_path`
 - `branch`
 
-`label` is stored as a single free-text string. `ttl` is fixed from creation time; this release does not include a metadata editing command.
+`label` is stored as a single free-text string. `ttl` is fixed from creation time; this release does not include a metadata editing command. `-m` sets a one-line intent describing what this worktree is for; it appears in `ww list --verbose` and `ww rm` safety output.
 
 When `label` is present, `ww-helper` also stores extra workspace context for later human summaries. That context is kept in Git's per-worktree admin area, not in tracked files.
 
@@ -289,19 +288,6 @@ Available helper-driven filters:
 
 `--verbose` appends extra metadata such as stored workspace context and timestamps to the human-readable output.
 
-### Check
-
-```bash
-ww check
-```
-
-`ww check` prints the current worktree path, branch, change state, and saved workspace context when that context is available.
-
-Warnings stay human-readable and conservative:
-
-- detached worktrees are called out explicitly
-- missing saved workspace context warns instead of failing
-
 ### New
 
 ```bash
@@ -310,7 +296,7 @@ ww new feat-a
 
 This creates branch `feat-a` from the current `HEAD` in `./.worktrees/feat-a`, then switches into it.
 
-For metadata-aware creation, use `ww-helper new-path --json --label ... --ttl ...`.
+For metadata-aware creation, use `ww-helper new-path --json --label ... --ttl ... -m "intent"`. The `-m` flag sets a one-line intent that appears in `ww list --verbose` and `ww rm` safety output.
 
 ### Remove
 

@@ -3,7 +3,6 @@ ww_print_help() {
 Usage:
   ww [switch] [<index>|<name>]
   ww list
-  ww check
   ww new <name>
   ww rm [--force] [--base <branch>] [<name>]
   ww rm --cleanup
@@ -12,7 +11,6 @@ Usage:
 Commands:
   switch  Select a worktree and change into it. Default when omitted.
   list    Print worktrees without changing directory.
-  check   Print the current worktree safety summary.
   new     Create a worktree under ./.worktrees/<name> and enter it.
   rm      Remove one worktree, or run cleanup review mode with --cleanup.
   help    Show this help.
@@ -24,7 +22,6 @@ Notes:
 Examples:
   ww
   ww 2
-  ww check
   ww switch feat-a
   ww new feat-demo
   ww rm feat-demo
@@ -44,7 +41,7 @@ ww_has_json_flag() {
 
 ww_is_helper_only_new_flag() {
   case "${1-}" in
-    --label|--label=*|--ttl|--ttl=*)
+    --label|--label=*|--ttl|--ttl=*|--message|--message=*|-m)
       return 0
       ;;
   esac
@@ -91,11 +88,6 @@ ww() {
     list)
       shift
       "$ww_helper_bin" list "$@"
-      return $?
-      ;;
-    check)
-      shift
-      "$ww_helper_bin" check "$@"
       return $?
       ;;
     rm)

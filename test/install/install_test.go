@@ -248,9 +248,6 @@ func TestWwHelpDoesNotCd(t *testing.T) {
 	if !strings.Contains(out, "\nCommands:\n") {
 		t.Fatalf("expected Commands section in help output, got %q", out)
 	}
-	if !strings.Contains(out, "\n  ww check\n") {
-		t.Fatalf("expected help to mention ww check, got %q", out)
-	}
 	if !strings.Contains(out, "\nExamples:\n") {
 		t.Fatalf("expected Examples section in help output, got %q", out)
 	}
@@ -636,37 +633,6 @@ func TestWwRmPassThroughWithoutChangingDirectory(t *testing.T) {
 
 	if !strings.Contains(out, "removed worktree /repo/.worktrees/alpha") {
 		t.Fatalf("expected rm output, got %q", out)
-	}
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if got := lines[len(lines)-1]; got != origin {
-		t.Fatalf("expected shell to stay in %q, got %q", origin, got)
-	}
-}
-
-func TestWwCheckPrintsOutputWithoutChangingDirectory(t *testing.T) {
-	home := t.TempDir()
-	rcPath := filepath.Join(home, ".zshrc")
-	if err := os.WriteFile(rcPath, []byte(""), 0o644); err != nil {
-		t.Fatalf("write rc file: %v", err)
-	}
-
-	runInstall(t, home)
-
-	origin := t.TempDir()
-	checkOutput := "Path: /repo/.worktrees/alpha"
-	if err := writeExecutableScript(filepath.Join(home, ".local", "bin", "ww-helper"), fmt.Sprintf("#!/usr/bin/env bash\n[ \"$1\" = \"check\" ] || exit 9\nprintf '%%s\\n' %q\n", checkOutput)); err != nil {
-		t.Fatalf("write fake ww-helper: %v", err)
-	}
-
-	out := runShell(t, home, fmt.Sprintf(`
-		cd %q
-		source %q
-		ww check
-		pwd
-	`, origin, rcPath))
-
-	if !strings.Contains(out, checkOutput) {
-		t.Fatalf("expected check output, got %q", out)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if got := lines[len(lines)-1]; got != origin {
