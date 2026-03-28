@@ -1215,663 +1215,6 @@ func TestRunGCMergedUsesBaseBranchResolution(t *testing.T) {
 	}
 }
 
-func TestRunRmSelectsCandidateConfirmsAndPrintsHumanResult(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	removed := &removeCall{}
-	deps := fakeDeps{
-		repoKey:       "/repo/.git",
-		defaultBranch: "main",
-		removed:       removed,
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-			{Path: "/repo/.worktrees/scratch", BranchLabel: "scratch"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/alpha": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-				BaseBranch:   "main",
-				BranchMerged: true,
-				DeleteBranch: true,
-			},
-			"/repo/.worktrees/beta": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-				BaseBranch:   "main",
-				Dirty:        true,
-				BranchMerged: false,
-			},
-			"/repo/.worktrees/scratch": {
-				Worktree:   worktree.Worktree{Path: "/repo/.worktrees/scratch", BranchLabel: "scratch"},
-				BaseBranch: "main",
-			},
-		},
-		removeResult: git.RemoveResult{
-			WorktreePath:    "/repo/.worktrees/alpha",
-			Branch:          "alpha",
-			BaseBranch:      "main",
-			RemovedWorktree: true,
-			DeletedBranch:   true,
-		},
-	}
-
-	code := Run(context.Background(), []string{"rm"}, strings.NewReader("1\ny\n"), stdout, stderr, deps)
-
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d", code)
-	}
-	if !strings.Contains(stderr.String(), "Safe to delete") ||
-		!strings.Contains(stderr.String(), "Review before deleting") ||
-		!strings.Contains(stderr.String(), "Not safe to delete") {
-		t.Fatalf("expected grouped removal list on stderr, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "✅ alpha") ||
-		!strings.Contains(stderr.String(), "⚠️ scratch") ||
-		!strings.Contains(stderr.String(), "🛑 beta") {
-		t.Fatalf("expected human-readable candidate rows on stderr, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "\n    /repo/.worktrees/alpha\n") ||
-		!strings.Contains(stderr.String(), "\n    /repo/.worktrees/scratch\n") ||
-		!strings.Contains(stderr.String(), "\n    /repo/.worktrees/beta\n") {
-		t.Fatalf("expected candidate paths on their own line, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "✅ Safe to delete") ||
-		!strings.Contains(stderr.String(), "branch alpha (already merged into main)") ||
-		!strings.Contains(stderr.String(), "Delete this worktree? [y/N]:") {
-		t.Fatalf("expected safe summary card on stderr, got %q", stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "removed worktree") || !strings.Contains(stdout.String(), "deleted branch") {
-		t.Fatalf("expected human-readable removal output, got %q", stdout.String())
-	}
-	if removed.item.Path != "/repo/.worktrees/alpha" || removed.opts.BaseBranch != "main" || removed.opts.Force {
-		t.Fatalf("expected selected removal call, got %#v", removed)
-	}
-}
-
-func TestRunRmDirtyCandidateShowsStopCardWithoutConfirming(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	removed := &removeCall{}
-	deps := fakeDeps{
-		repoKey: "/repo/.git",
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/beta": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-				BaseBranch:   "main",
-				Dirty:        true,
-				BranchMerged: false,
-			},
-		},
-		removed: removed,
-	}
-
-	code := Run(context.Background(), []string{"rm", "beta"}, strings.NewReader(""), stdout, stderr, deps)
-
-	if code != 1 {
-		t.Fatalf("expected exit code 1, got %d", code)
-	}
-	if !strings.Contains(stderr.String(), "🛑 Not safe to delete") ||
-		!strings.Contains(stderr.String(), "uncommitted changes detected") ||
-		!strings.Contains(stderr.String(), "rerun with --force") {
-		t.Fatalf("expected stop card with next steps, got %q", stderr.String())
-	}
-	if strings.Contains(stderr.String(), "Delete this worktree? [y/N]:") {
-		t.Fatalf("expected dirty removal to stop before confirmation, got %q", stderr.String())
-	}
-	if removed.item.Path != "" {
-		t.Fatalf("expected removal not to be called, got %#v", removed)
-	}
-	if stdout.Len() != 0 {
-		t.Fatalf("expected no stdout output, got %q", stdout.String())
-	}
-}
-
-func TestRunRemoveSummaryIncludesTaskContext(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	removed := &removeCall{}
-	notePath := filepath.Join(t.TempDir(), "git-private", "ww", "task-note.md")
-	if err := tasknote.WriteFile(notePath, tasknote.Note{
-		TaskLabel: "task:fix-login",
-		Branch:    "alpha",
-		CreatedAt: time.Date(2026, 3, 24, 12, 34, 56, 0, time.UTC),
-		Intent:    "Fix the login redirect loop",
-		Body:      "Created by ww.",
-	}); err != nil {
-		t.Fatalf("write task note: %v", err)
-	}
-
-	deps := fakeDeps{
-		repoKey:         "/repo/.git",
-		defaultBranch:   "main",
-		removed:         removed,
-		worktreeGitPath: notePath,
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", BranchRef: "refs/heads/main", IsCurrent: true},
-			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-		},
-		metadata: map[string]map[string]state.WorktreeMetadata{
-			"/repo/.git": {
-				"/repo/.worktrees/alpha": {
-					Label: "task:fix-login",
-				},
-			},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/alpha": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-				BaseBranch:   "main",
-				BranchMerged: true,
-				DeleteBranch: true,
-			},
-		},
-		removeResult: git.RemoveResult{
-			WorktreePath:    "/repo/.worktrees/alpha",
-			Branch:          "alpha",
-			BaseBranch:      "main",
-			RemovedWorktree: true,
-			DeletedBranch:   true,
-		},
-	}
-
-	code := Run(context.Background(), []string{"rm", "alpha"}, strings.NewReader("y\n"), stdout, stderr, deps)
-
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d", code)
-	}
-	if strings.Contains(stderr.String(), "Task context:") {
-		t.Fatalf("expected task wording removed from summary, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Workspace context:") ||
-		!strings.Contains(stderr.String(), "Fix the login redirect loop") {
-		t.Fatalf("expected human workspace context in summary, got %q", stderr.String())
-	}
-}
-
-func TestRunRemoveSummaryShowsWeakerBoundaryState(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	deps := fakeDeps{
-		repoKey:       "/repo/.git",
-		defaultBranch: "main",
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", BranchRef: "refs/heads/main", IsCurrent: true},
-			{Path: "/repo/.worktrees/scratch", BranchLabel: "scratch"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/scratch": {
-				Worktree:   worktree.Worktree{Path: "/repo/.worktrees/scratch", BranchLabel: "scratch"},
-				BaseBranch: "main",
-			},
-		},
-	}
-
-	code := Run(context.Background(), []string{"rm", "scratch"}, strings.NewReader("n\n"), stdout, stderr, deps)
-
-	if code != 130 {
-		t.Fatalf("expected exit code 130, got %d", code)
-	}
-	if !strings.Contains(stderr.String(), "no saved workspace context") {
-		t.Fatalf("expected missing-context boundary warning, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "detached from a branch") {
-		t.Fatalf("expected detached boundary warning, got %q", stderr.String())
-	}
-}
-
-func TestRunRmOutputsJSONErrorForDirtyTargetWhenRequested(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	deps := fakeDeps{
-		repoKey: "/repo/.git",
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/beta": {
-				Worktree:   worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-				BaseBranch: "main",
-				Dirty:      true,
-			},
-		},
-		defaultBranch: "main",
-	}
-
-	code := Run(context.Background(), []string{"rm", "--json", "--non-interactive", "beta"}, strings.NewReader(""), stdout, stderr, deps)
-
-	if code != 1 {
-		t.Fatalf("expected exit code 1, got %d", code)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("expected no stderr output, got %q", stderr.String())
-	}
-
-	envelope := decodeEnvelope(t, stdout.String())
-	if envelope.OK {
-		t.Fatalf("expected error envelope, got %#v", envelope)
-	}
-	if envelope.Command != "rm" {
-		t.Fatalf("expected command rm, got %#v", envelope)
-	}
-	if envelope.Error == nil {
-		t.Fatalf("expected error payload, got %#v", envelope)
-	}
-	if envelope.Error.Code != "WORKTREE_DIRTY" || envelope.Error.ExitCode != 1 {
-		t.Fatalf("unexpected error payload: %#v", envelope.Error)
-	}
-	if !strings.Contains(envelope.Error.Message, "uncommitted changes") {
-		t.Fatalf("expected dirty-worktree message, got %#v", envelope.Error)
-	}
-}
-
-func TestRunRmNonInteractiveSkipsConfirmation(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	removed := &removeCall{}
-	deps := fakeDeps{
-		repoKey: "/repo/.git",
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/alpha": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-				BaseBranch:   "main",
-				BranchMerged: true,
-				DeleteBranch: true,
-			},
-		},
-		defaultBranch: "main",
-		removeResult: git.RemoveResult{
-			WorktreePath:    "/repo/.worktrees/alpha",
-			Branch:          "alpha",
-			BaseBranch:      "main",
-			RemovedWorktree: true,
-			DeletedBranch:   true,
-		},
-		removed: removed,
-	}
-
-	code := Run(context.Background(), []string{"rm", "--non-interactive", "alpha"}, strings.NewReader(""), stdout, stderr, deps)
-
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d", code)
-	}
-	if strings.Contains(stderr.String(), "Delete this worktree? [y/N]:") {
-		t.Fatalf("expected confirmation prompt to be skipped, got %q", stderr.String())
-	}
-	if removed.item.Path != "/repo/.worktrees/alpha" || removed.opts.BaseBranch != "main" || removed.opts.Force {
-		t.Fatalf("expected removal call, got %#v", removed)
-	}
-	if !strings.Contains(stdout.String(), "removed worktree") {
-		t.Fatalf("expected human-readable removal output, got %q", stdout.String())
-	}
-}
-
-func TestRunRmNonInteractiveRejectsMissingTargetWhenMultipleCandidatesExist(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	deps := fakeDeps{
-		repoKey: "/repo/.git",
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/alpha": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-				BaseBranch:   "main",
-				BranchMerged: true,
-				DeleteBranch: true,
-			},
-			"/repo/.worktrees/beta": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-				BaseBranch:   "main",
-				BranchMerged: true,
-				DeleteBranch: true,
-			},
-		},
-		defaultBranch: "main",
-	}
-
-	code := Run(context.Background(), []string{"rm", "--json", "--non-interactive"}, strings.NewReader(""), stdout, stderr, deps)
-
-	if code != 2 {
-		t.Fatalf("expected exit code 2, got %d", code)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("expected no stderr output, got %q", stderr.String())
-	}
-
-	envelope := decodeEnvelope(t, stdout.String())
-	if envelope.OK {
-		t.Fatalf("expected error envelope, got %#v", envelope)
-	}
-	if envelope.Command != "rm" {
-		t.Fatalf("expected command rm, got %#v", envelope)
-	}
-	if envelope.Error == nil {
-		t.Fatalf("expected error payload, got %#v", envelope)
-	}
-	if envelope.Error.Code != "AMBIGUOUS_MATCH" || envelope.Error.ExitCode != 2 {
-		t.Fatalf("unexpected error payload: %#v", envelope.Error)
-	}
-	if !strings.Contains(envelope.Error.Message, "must specify a target") {
-		t.Fatalf("expected ambiguous-target message, got %#v", envelope.Error)
-	}
-}
-
-func TestRunRmOutputsJSONWhenRequested(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	deps := fakeDeps{
-		repoKey: "/repo/.git",
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/alpha": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-				BaseBranch:   "release/1.0",
-				BranchMerged: true,
-				DeleteBranch: true,
-			},
-		},
-		removeResult: git.RemoveResult{
-			WorktreePath:    "/repo/.worktrees/alpha",
-			Branch:          "alpha",
-			BaseBranch:      "release/1.0",
-			RemovedWorktree: true,
-			DeletedBranch:   true,
-		},
-	}
-
-	code := Run(context.Background(), []string{"rm", "--json", "--base", "release/1.0", "alpha"}, strings.NewReader("y\n"), stdout, stderr, deps)
-
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d", code)
-	}
-
-	envelope := decodeEnvelope(t, stdout.String())
-	if !envelope.OK {
-		t.Fatalf("expected ok envelope, got %#v", envelope)
-	}
-	if envelope.Command != "rm" {
-		t.Fatalf("expected command rm, got %#v", envelope)
-	}
-
-	var data struct {
-		WorktreePath    string `json:"worktree_path"`
-		BaseBranch      string `json:"base_branch"`
-		DeletedBranch   bool   `json:"deleted_branch"`
-		RemovedWorktree bool   `json:"removed_worktree"`
-	}
-	decodeEnvelopeData(t, envelope, &data)
-
-	if data.WorktreePath != "/repo/.worktrees/alpha" || data.BaseBranch != "release/1.0" || !data.DeletedBranch || !data.RemovedWorktree {
-		t.Fatalf("unexpected json payload, got %#v", data)
-	}
-}
-
-func TestRunRmPassesForceToRemoval(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	removed := &removeCall{}
-	deps := fakeDeps{
-		repoKey: "/repo/.git",
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/alpha": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-				BaseBranch:   "main",
-				Dirty:        true,
-				BranchMerged: false,
-			},
-		},
-		removeResult: git.RemoveResult{
-			WorktreePath:     "/repo/.worktrees/alpha",
-			Branch:           "alpha",
-			BaseBranch:       "main",
-			RemovedWorktree:  true,
-			KeptBranchReason: "not merged",
-		},
-		removed: removed,
-	}
-
-	code := Run(context.Background(), []string{"rm", "--force", "alpha"}, strings.NewReader("y\n"), stdout, stderr, deps)
-
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d", code)
-	}
-	if !strings.Contains(stderr.String(), "⚠️ Review before deleting") ||
-		!strings.Contains(stderr.String(), "uncommitted changes will be lost") ||
-		!strings.Contains(stderr.String(), "Delete this worktree? [y/N]:") {
-		t.Fatalf("expected force mode warning card, got %q", stderr.String())
-	}
-	if !removed.opts.Force {
-		t.Fatalf("expected force to be forwarded, got %#v", removed)
-	}
-}
-
-func TestRunRmCleanupRejectsTarget(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-
-	code := Run(context.Background(), []string{"rm", "--cleanup", "alpha"}, strings.NewReader(""), stdout, stderr, fakeDeps{})
-
-	if code != 2 {
-		t.Fatalf("expected exit code 2, got %d", code)
-	}
-	if !strings.Contains(stderr.String(), "--cleanup") {
-		t.Fatalf("expected cleanup validation message, got %q", stderr.String())
-	}
-}
-
-func TestRunRmCleanupRejectsJSON(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-
-	code := Run(context.Background(), []string{"rm", "--cleanup", "--json"}, strings.NewReader(""), stdout, stderr, fakeDeps{})
-
-	if code != 2 {
-		t.Fatalf("expected exit code 2, got %d", code)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("expected json error to avoid stderr output, got %q", stderr.String())
-	}
-	envelope := decodeEnvelope(t, stdout.String())
-	if envelope.OK || envelope.Error == nil {
-		t.Fatalf("expected json error envelope, got %#v", envelope)
-	}
-	if !strings.Contains(envelope.Error.Message, "--cleanup") {
-		t.Fatalf("expected cleanup validation message, got %#v", envelope.Error)
-	}
-}
-
-func TestRunRmCleanupRemovesSelectedCandidate(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	removed := &removeCall{}
-	deps := fakeDeps{
-		repoKey: "/repo/.git",
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/alpha": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
-				BaseBranch:   "main",
-				BranchMerged: true,
-				DeleteBranch: true,
-			},
-			"/repo/.worktrees/beta": {
-				Worktree:   worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-				BaseBranch: "main",
-			},
-		},
-		defaultBranch: "main",
-		removeResult: git.RemoveResult{
-			WorktreePath:    "/repo/.worktrees/alpha",
-			Branch:          "alpha",
-			BaseBranch:      "main",
-			RemovedWorktree: true,
-			DeletedBranch:   true,
-		},
-		removed: removed,
-	}
-
-	code := Run(context.Background(), []string{"rm", "--cleanup"}, strings.NewReader("1\ny\n"), stdout, stderr, deps)
-
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d", code)
-	}
-	if !strings.Contains(stderr.String(), "Cleanup mode") {
-		t.Fatalf("expected cleanup banner, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "2 workspaces available: 1 safe, 1 review, 0 blocked.") {
-		t.Fatalf("expected cleanup availability summary, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Select a workspace to review [number, Enter to finish]:") ||
-		!strings.Contains(stderr.String(), "Delete this worktree? [y/N]:") {
-		t.Fatalf("expected cleanup confirmation prompt, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Cleanup finished. Removed 1 workspace. 1 workspace still listed.") {
-		t.Fatalf("expected cleanup completion summary, got %q", stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "removed worktree /repo/.worktrees/alpha") {
-		t.Fatalf("expected cleanup removal output, got %q", stdout.String())
-	}
-	if removed.item.Path != "/repo/.worktrees/alpha" {
-		t.Fatalf("expected cleanup to remove alpha, got %#v", removed)
-	}
-}
-
-func TestRunRmCleanupDirtyCandidateStopsBeforeRemoval(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	removed := &removeCall{}
-	deps := fakeDeps{
-		repoKey: "/repo/.git",
-		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
-			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/beta": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
-				BaseBranch:   "main",
-				Dirty:        true,
-				BranchMerged: false,
-			},
-		},
-		defaultBranch: "main",
-		removed:       removed,
-	}
-
-	code := Run(context.Background(), []string{"rm", "--cleanup"}, strings.NewReader("1\n\n\n"), stdout, stderr, deps)
-
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d", code)
-	}
-	if !strings.Contains(stderr.String(), "uncommitted changes detected") ||
-		!strings.Contains(stderr.String(), "Select a workspace to review [number, Enter to finish]:") {
-		t.Fatalf("expected cleanup stop card, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Press Enter to return to cleanup list:") {
-		t.Fatalf("expected cleanup continue prompt, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "1 workspace available: 0 safe, 0 review, 1 blocked.") {
-		t.Fatalf("expected cleanup availability summary, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Cleanup finished. No workspaces removed. 1 workspace still listed.") {
-		t.Fatalf("expected cleanup no-op summary, got %q", stderr.String())
-	}
-	if strings.Count(stderr.String(), "beta") < 2 {
-		t.Fatalf("expected dirty workspace to remain visible in cleanup list, got %q", stderr.String())
-	}
-	if removed.item.Path != "" {
-		t.Fatalf("expected cleanup not to remove dirty candidate, got %#v", removed)
-	}
-	if stdout.Len() != 0 {
-		t.Fatalf("expected no stdout output, got %q", stdout.String())
-	}
-}
-
-func TestRunRmTreatsBaseBranchWorktreeAsReview(t *testing.T) {
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	removed := &removeCall{}
-	deps := fakeDeps{
-		repoKey:       "/repo/.git",
-		defaultBranch: "main",
-		removed:       removed,
-		worktrees: []worktree.Worktree{
-			{Path: "/repo/.worktrees/detached", BranchLabel: "(detached)"},
-			{Path: "/repo/.worktrees/main", BranchLabel: "main", BranchRef: "refs/heads/main"},
-			{Path: "/repo/.worktrees/topic", BranchLabel: "topic", BranchRef: "refs/heads/topic", IsCurrent: true},
-		},
-		previews: map[string]git.RemovalPreview{
-			"/repo/.worktrees/main": {
-				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/main", BranchLabel: "main", BranchRef: "refs/heads/main"},
-				BaseBranch:   "main",
-				BranchMerged: true,
-				DeleteBranch: false,
-			},
-			"/repo/.worktrees/detached": {
-				Worktree:   worktree.Worktree{Path: "/repo/.worktrees/detached", BranchLabel: "(detached)"},
-				BaseBranch: "main",
-			},
-		},
-		removeResult: git.RemoveResult{
-			WorktreePath:     "/repo/.worktrees/main",
-			Branch:           "main",
-			BaseBranch:       "main",
-			RemovedWorktree:  true,
-			KeptBranchReason: "base branch",
-		},
-	}
-
-	code := Run(context.Background(), []string{"rm"}, strings.NewReader("2\ny\n"), stdout, stderr, deps)
-
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d", code)
-	}
-	if strings.Contains(stderr.String(), "Safe to delete\n[1] ✅ main") {
-		t.Fatalf("did not expect main in safe group, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Review before deleting") ||
-		!strings.Contains(stderr.String(), "⚠️ main  Base branch will be kept") {
-		t.Fatalf("expected main to be rendered as review, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "\n    /repo/.worktrees/main\n") ||
-		!strings.Contains(stderr.String(), "\n    /repo/.worktrees/detached\n") {
-		t.Fatalf("expected review candidates to include paths, got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Will keep:\n- branch main (not deleted because it is the base branch)") {
-		t.Fatalf("expected base-branch summary, got %q", stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "kept branch main (base branch)") {
-		t.Fatalf("expected human result to keep main, got %q", stdout.String())
-	}
-	if removed.item.Path != "/repo/.worktrees/main" {
-		t.Fatalf("expected main worktree to be selected, got %#v", removed)
-	}
-}
-
 func TestRunSwitchPathContinuesWhenStateLoadFails(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -2283,6 +1626,506 @@ func TestRunSwitchPathInteractiveSelectionReturnsNonZeroOnEOFWithoutSelection(t 
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("expected no stdout output, got %q", stdout.String())
+	}
+}
+
+func TestRunRmRejectsCleanupFlag(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	code := Run(context.Background(), []string{"rm", "--cleanup"}, strings.NewReader(""), stdout, stderr, fakeDeps{})
+	if code != 2 {
+		t.Fatalf("expected exit code 2 for unknown flag, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "unknown option: --cleanup") {
+		t.Fatalf("expected unknown option error, got %q", stderr.String())
+	}
+}
+
+func TestRunRmRejectsBaseFlag(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	code := Run(context.Background(), []string{"rm", "--base", "main"}, strings.NewReader(""), stdout, stderr, fakeDeps{})
+	if code != 2 {
+		t.Fatalf("expected exit code 2 for unknown flag, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "unknown option: --base") {
+		t.Fatalf("expected unknown option error, got %q", stderr.String())
+	}
+}
+
+func TestRunRmRejectsNonInteractiveFlag(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	code := Run(context.Background(), []string{"rm", "--non-interactive", "alpha"}, strings.NewReader(""), stdout, stderr, fakeDeps{})
+	if code != 2 {
+		t.Fatalf("expected exit code 2 for unknown flag, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "unknown option: --non-interactive") {
+		t.Fatalf("expected unknown option error, got %q", stderr.String())
+	}
+}
+
+func TestRunRmInteractiveShowsFlatListAndConfirms(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		removed:       removed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+			"/repo/.worktrees/beta": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+				BaseBranch:   "main",
+				Dirty:        true,
+				BranchMerged: false,
+			},
+		},
+		removeResult: git.RemoveResult{
+			WorktreePath:    "/repo/.worktrees/alpha",
+			Branch:          "alpha",
+			BaseBranch:      "main",
+			RemovedWorktree: true,
+			DeletedBranch:   true,
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm"}, strings.NewReader("1\ny\n"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "Remove which worktree?") {
+		t.Fatalf("expected flat list header, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "1  alpha") {
+		t.Fatalf("expected alpha in list, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "2  beta  ●") {
+		t.Fatalf("expected beta with dirty marker, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "● uncommitted changes") {
+		t.Fatalf("expected dirty footnote, got %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Safe to delete") || strings.Contains(stderr.String(), "Review before") || strings.Contains(stderr.String(), "Not safe") {
+		t.Fatalf("expected no severity headings, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Remove alpha? [y/N]") {
+		t.Fatalf("expected simple confirm prompt, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Removed alpha (branch deleted)") {
+		t.Fatalf("expected one-line result, got %q", stdout.String())
+	}
+}
+
+func TestRunRmDirtyWithoutForceExitsWithMessage(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		removed:       removed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/beta": {
+				Worktree: worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+				Dirty:    true,
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "beta"}, strings.NewReader(""), stdout, stderr, deps)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "beta has uncommitted changes") ||
+		!strings.Contains(stderr.String(), "--force") {
+		t.Fatalf("expected dirty block message, got %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "[y/N]") {
+		t.Fatalf("expected no confirmation prompt for dirty block, got %q", stderr.String())
+	}
+	if removed.item.Path != "" {
+		t.Fatalf("expected no removal, got %#v", removed)
+	}
+}
+
+func TestRunRmDirtyWithForceShowsWarningConfirm(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		removed:       removed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree: worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				Dirty:    true,
+			},
+		},
+		removeResult: git.RemoveResult{
+			WorktreePath:     "/repo/.worktrees/alpha",
+			Branch:           "alpha",
+			BaseBranch:       "main",
+			RemovedWorktree:  true,
+			KeptBranchReason: "not merged",
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "--force", "alpha"}, strings.NewReader("y\n"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "Remove alpha? Uncommitted changes will be lost. [y/N]") {
+		t.Fatalf("expected force warning prompt, got %q", stderr.String())
+	}
+	if !removed.opts.Force {
+		t.Fatalf("expected force flag forwarded, got %#v", removed)
+	}
+}
+
+func TestRunRmSingleCandidateSkipsList(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		removed:       removed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+		},
+		removeResult: git.RemoveResult{
+			WorktreePath:    "/repo/.worktrees/alpha",
+			Branch:          "alpha",
+			BaseBranch:      "main",
+			RemovedWorktree: true,
+			DeletedBranch:   true,
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm"}, strings.NewReader("y\n"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if strings.Contains(stderr.String(), "Remove which worktree?") {
+		t.Fatalf("expected no list for single candidate, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Remove alpha? [y/N]") {
+		t.Fatalf("expected direct confirm, got %q", stderr.String())
+	}
+}
+
+func TestRunRmWithTargetSkipsList(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		removed:       removed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+			"/repo/.worktrees/beta": {
+				Worktree:   worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+				BaseBranch: "main",
+			},
+		},
+		removeResult: git.RemoveResult{
+			WorktreePath:    "/repo/.worktrees/alpha",
+			Branch:          "alpha",
+			BaseBranch:      "main",
+			RemovedWorktree: true,
+			DeletedBranch:   true,
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "alpha"}, strings.NewReader("y\n"), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if strings.Contains(stderr.String(), "Remove which worktree?") {
+		t.Fatalf("expected no list when target specified, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Remove alpha? [y/N]") {
+		t.Fatalf("expected direct confirm, got %q", stderr.String())
+	}
+	if removed.item.Path != "/repo/.worktrees/alpha" {
+		t.Fatalf("expected alpha to be removed, got %#v", removed)
+	}
+}
+
+func TestRunRmCurrentWorktreeTargetShowsProtectionMessage(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		removed:       removed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", BranchRef: "refs/heads/main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "main"}, strings.NewReader(""), stdout, stderr, deps)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "Cannot remove the current worktree") ||
+		!strings.Contains(stderr.String(), "ww go") {
+		t.Fatalf("expected current worktree protection message, got %q", stderr.String())
+	}
+	if removed.item.Path != "" {
+		t.Fatalf("expected no removal, got %#v", removed)
+	}
+}
+
+func TestRunRmNonexistentTargetShowsError(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "nonexistent"}, strings.NewReader(""), stdout, stderr, deps)
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+}
+
+func TestRunRmUserDeclinesConfirmation(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	removed := &removeCall{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		removed:       removed,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "alpha"}, strings.NewReader("n\n"), stdout, stderr, deps)
+
+	if code != 130 {
+		t.Fatalf("expected exit code 130, got %d", code)
+	}
+	if removed.item.Path != "" {
+		t.Fatalf("expected no removal on decline, got %#v", removed)
+	}
+}
+
+func TestRunRmJSONModeImpliesNonInteractive(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+		},
+		removeResult: git.RemoveResult{
+			WorktreePath:    "/repo/.worktrees/alpha",
+			Branch:          "alpha",
+			BaseBranch:      "main",
+			RemovedWorktree: true,
+			DeletedBranch:   true,
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "--json", "alpha"}, strings.NewReader(""), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr, got %q", stderr.String())
+	}
+}
+
+func TestRunRmJSONDirtyTargetReturnsError(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/beta": {
+				Worktree: worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+				Dirty:    true,
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "--json", "beta"}, strings.NewReader(""), stdout, stderr, deps)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+}
+
+func TestRunRmJSONNoTargetMultipleCandidatesReturnsAmbiguous(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		worktrees: []worktree.Worktree{
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+			{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+		},
+		previews: map[string]git.RemovalPreview{
+			"/repo/.worktrees/alpha": {
+				Worktree:     worktree.Worktree{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", BranchRef: "refs/heads/alpha"},
+				BaseBranch:   "main",
+				BranchMerged: true,
+				DeleteBranch: true,
+			},
+			"/repo/.worktrees/beta": {
+				Worktree:   worktree.Worktree{Path: "/repo/.worktrees/beta", BranchLabel: "beta", BranchRef: "refs/heads/beta"},
+				BaseBranch: "main",
+			},
+		},
+	}
+
+	code := Run(context.Background(), []string{"rm", "--json"}, strings.NewReader(""), stdout, stderr, deps)
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+}
+
+func TestRunRmResultBranchKeptNotMerged(t *testing.T) {
+	var buf bytes.Buffer
+	writeRemoveHuman(&buf, git.RemoveResult{
+		WorktreePath:     "/repo/.worktrees/fix-header",
+		Branch:           "fix/header",
+		BaseBranch:       "main",
+		RemovedWorktree:  true,
+		KeptBranchReason: "not merged",
+	})
+	expected := "Removed fix/header (branch kept, not merged)\n"
+	if buf.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, buf.String())
+	}
+}
+
+func TestRunRmResultDetached(t *testing.T) {
+	var buf bytes.Buffer
+	writeRemoveHuman(&buf, git.RemoveResult{
+		WorktreePath:    "/repo/.worktrees/agent-tmp",
+		RemovedWorktree: true,
+	})
+	expected := "Removed agent-tmp\n"
+	if buf.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, buf.String())
+	}
+}
+
+func TestRunRmResultBranchDeleted(t *testing.T) {
+	var buf bytes.Buffer
+	writeRemoveHuman(&buf, git.RemoveResult{
+		WorktreePath:    "/repo/.worktrees/alpha",
+		Branch:          "alpha",
+		BaseBranch:      "main",
+		RemovedWorktree: true,
+		DeletedBranch:   true,
+	})
+	expected := "Removed alpha (branch deleted)\n"
+	if buf.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, buf.String())
 	}
 }
 
