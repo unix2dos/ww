@@ -145,15 +145,7 @@ func AnnotateExtendedStatus(ctx context.Context, runner Runner, items []worktree
 				return
 			}
 
-			// Merged check
-			merged, err := BranchMergedIntoBase(ctx, runner, item.Path, item.BranchLabel, baseBranch)
-			if err != nil {
-				ch <- result{idx, err}
-				return
-			}
-			item.IsMerged = merged
-
-			// Ahead/behind
+			// Ahead/behind (computed first, used by merged check below)
 			ahead, behind, err := AheadBehind(ctx, runner, item.Path, item.BranchLabel, baseBranch)
 			if err != nil {
 				ch <- result{idx, err}
@@ -161,6 +153,20 @@ func AnnotateExtendedStatus(ctx context.Context, runner Runner, items []worktree
 			}
 			item.Ahead = ahead
 			item.Behind = behind
+
+			// Merged check: skip when ahead==0 && behind==0 (new branch
+			// just forked from base — git considers it "merged" but it's
+			// really just identical).
+			if ahead == 0 && behind == 0 {
+				ch <- result{idx, nil}
+				return
+			}
+			merged, err := BranchMergedIntoBase(ctx, runner, item.Path, item.BranchLabel, baseBranch)
+			if err != nil {
+				ch <- result{idx, err}
+				return
+			}
+			item.IsMerged = merged
 
 			ch <- result{idx, nil}
 		}(i)
