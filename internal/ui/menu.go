@@ -123,7 +123,7 @@ func formatEnhancedMenuRow(item worktree.Worktree, branchWidth, abWidth, fcWidth
 	// Marker column: ★ for current, space otherwise
 	var marker string
 	if item.IsCurrent {
-		marker = "★"
+		marker = Bold("★")
 	} else {
 		marker = " "
 	}

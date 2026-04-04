@@ -57,6 +57,7 @@ func RenderTUI(w io.Writer, items []worktree.Worktree, active int) {
 		fmt.Fprintln(w, formatTUIRow(item, i == active, branchWidth, abWidth, fcWidth))
 	}
 	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  "+FormatSummary(items))
 	fmt.Fprint(w, "Use Up/Down (or j/k). Enter to confirm. Esc/Ctrl-C to cancel.")
 }
 

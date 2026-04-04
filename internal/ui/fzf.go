@@ -89,7 +89,7 @@ func formatFzfCandidates(items []worktree.Worktree) []byte {
 	for _, item := range items {
 		marker := " "
 		if item.IsCurrent {
-			marker = "★"
+			marker = Bold("★")
 		}
 
 		statusStr := colorizeStatus(item)

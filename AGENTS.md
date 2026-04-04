@@ -40,12 +40,8 @@ If the baseline is red, report that before making feature changes.
 
 ## Safety Rules
 
-- Treat `ww check` as human-readable output, not a stable machine interface.
 - Do not run `ww-helper gc` without at least one explicit selector such as `--ttl-expired`, `--idle 7d`, or `--merged`.
 - Do not remove dirty worktrees without explicit human approval.
 - Do not remove the active worktree.
 - If `ww-helper` does not cover the workflow you need, document the gap before falling back to raw Git commands.
 
-## Optional Repo Skill
-
-If your agent platform supports installable skills, this repository includes a portable template at `skills/using-ww-worktrees/SKILL.md`. The skill is optional. The repository contract is `ww-helper` plus the rules in this file. For installation guidance, see `docs/agent-skills.md`.

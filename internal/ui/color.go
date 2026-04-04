@@ -3,6 +3,7 @@ package ui
 import (
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -25,7 +26,7 @@ func StripAnsi(s string) string {
 }
 
 func VisualLen(s string) int {
-	return len(StripAnsi(s))
+	return utf8.RuneCountInString(StripAnsi(s))
 }
 
 // PadRight pads s to width based on visual (non-ANSI) length.

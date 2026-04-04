@@ -125,15 +125,7 @@ ww-helper gc --ttl-expired --idle 7d --dry-run --json
 ww-helper rm --json --non-interactive feat-a
 ```
 
-`ww` does not install platform-specific skills. The shared integration contract is:
-
-- repository instructions in `AGENTS.md`
-- machine-readable automation through `ww-helper`
-- an optional local skill template at `skills/using-ww-worktrees/SKILL.md` for platforms that support installable skills
-
-When `ww-helper` covers a workflow, agents should use it instead of scripting raw `git worktree` commands.
-
-For local skill installation guidance, see [Optional Agent Skill Setup](agent-skills.md).
+The shared integration contract is `AGENTS.md` plus the machine-readable `ww-helper` commands. When `ww-helper` covers a workflow, agents should use it instead of scripting raw `git worktree` commands.
 
 `ww-helper switch-path` remains a path-printing helper; agents should keep using `switch-path` and the JSON subcommands above for machine-readable flows.
 
