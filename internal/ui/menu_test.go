@@ -8,46 +8,126 @@ import (
 	"ww/internal/worktree"
 )
 
-func TestRenderMenuIncludesIndexBranchPathAndActiveStatus(t *testing.T) {
+func TestRenderMenuShowsEnhancedFormat(t *testing.T) {
 	var buf bytes.Buffer
 
-	RenderMenu(&buf, []worktree.Worktree{
-		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true, IsDirty: true},
-		{Index: 2, BranchLabel: "feat-a", Path: "/repo/.worktrees/feat-a", IsDirty: true},
-	})
+	items := []worktree.Worktree{
+		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true, Staged: 3, Unstaged: 1, Untracked: 2, Ahead: 2, IsDirty: true},
+		{Index: 2, BranchLabel: "feat-a", Path: "/repo/.worktrees/feat-a", Staged: 1, Untracked: 1, Ahead: 5, Behind: 3, IsDirty: true},
+		{Index: 3, BranchLabel: "fix/typo", Path: "/repo/.worktrees/fix-typo", IsMerged: true},
+	}
 
+	RenderMenu(&buf, items)
 	got := buf.String()
-	if !strings.Contains(got, "[1] [CURRENT] [DIRTY] main   /repo") {
-		t.Fatalf("expected current row, got %q", got)
+
+	// Current worktree has ★ marker
+	if !strings.Contains(got, "★") {
+		t.Fatalf("expected ★ marker for current worktree, got %q", got)
 	}
-	if !strings.Contains(got, "[2] [DIRTY]           feat-a /repo/.worktrees/feat-a") {
-		t.Fatalf("expected non-current row, got %q", got)
-	}
-	if !strings.Contains(got, "Select a worktree [number]: ") {
-		t.Fatalf("expected prompt, got %q", got)
+
+	// Prompt uses Select [1-N]
+	if !strings.Contains(got, "Select [1-3]>") {
+		t.Fatalf("expected 'Select [1-3]>' prompt, got %q", got)
 	}
 }
 
-func TestRenderMenuAlignsPathColumnAcrossRows(t *testing.T) {
+func TestRenderMenuShowsSummaryWithSafeToRemove(t *testing.T) {
 	var buf bytes.Buffer
 
-	RenderMenu(&buf, []worktree.Worktree{
+	items := []worktree.Worktree{
 		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true},
-		{Index: 2, BranchLabel: "codex/current-dirty-status", Path: "/repo/.worktrees/current-dirty-status", IsDirty: true},
-	})
-
-	lines := strings.Split(buf.String(), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected at least two rendered rows, got %q", buf.String())
+		{Index: 2, BranchLabel: "fix/typo", Path: "/wt/fix-typo", IsMerged: true},
+		{Index: 3, BranchLabel: "feat-a", Path: "/wt/feat-a", Ahead: 5},
 	}
 
-	mainPathCol := strings.Index(lines[0], "/repo")
-	featurePathCol := strings.Index(lines[1], "/repo/.worktrees/current-dirty-status")
-	if mainPathCol == -1 || featurePathCol == -1 {
-		t.Fatalf("expected both paths in output, got %q", buf.String())
+	RenderMenu(&buf, items)
+	got := buf.String()
+
+	if !strings.Contains(got, "3 worktrees") {
+		t.Fatalf("expected '3 worktrees' in summary, got %q", got)
 	}
-	if mainPathCol != featurePathCol {
-		t.Fatalf("expected aligned path columns, got %d and %d in %q", mainPathCol, featurePathCol, buf.String())
+	if !strings.Contains(got, "safe to remove") {
+		t.Fatalf("expected 'safe to remove' in summary, got %q", got)
+	}
+	if !strings.Contains(got, "ww rm 2") {
+		t.Fatalf("expected 'ww rm 2' hint in summary, got %q", got)
+	}
+}
+
+func TestRenderMenuSummaryOmitsSafeToRemoveWhenNone(t *testing.T) {
+	var buf bytes.Buffer
+
+	items := []worktree.Worktree{
+		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true},
+		{Index: 2, BranchLabel: "feat-a", Path: "/wt/feat-a", Ahead: 5},
+	}
+
+	RenderMenu(&buf, items)
+	got := buf.String()
+
+	if !strings.Contains(got, "2 worktrees") {
+		t.Fatalf("expected '2 worktrees' in summary, got %q", got)
+	}
+	if strings.Contains(got, "safe to remove") {
+		t.Fatalf("did not expect 'safe to remove', got %q", got)
+	}
+}
+
+func TestRenderMenuSingularWorktree(t *testing.T) {
+	var buf bytes.Buffer
+
+	items := []worktree.Worktree{
+		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true},
+	}
+
+	RenderMenu(&buf, items)
+	got := buf.String()
+
+	if !strings.Contains(got, "1 worktree") {
+		t.Fatalf("expected '1 worktree' (singular), got %q", got)
+	}
+	// Check it's not "worktrees" (plural)
+	if strings.Contains(got, "1 worktrees") {
+		t.Fatalf("expected singular 'worktree', got %q", got)
+	}
+}
+
+func TestRenderMenuSummaryShowsOnlyFirstSafeIndex(t *testing.T) {
+	var buf bytes.Buffer
+
+	items := []worktree.Worktree{
+		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true},
+		{Index: 2, BranchLabel: "fix/typo", Path: "/wt/fix-typo", IsMerged: true},
+		{Index: 3, BranchLabel: "fix/other", Path: "/wt/fix-other", IsMerged: true},
+	}
+
+	RenderMenu(&buf, items)
+	got := buf.String()
+
+	if !strings.Contains(got, "2 safe to remove") {
+		t.Fatalf("expected '2 safe to remove' in summary, got %q", got)
+	}
+	if !strings.Contains(got, "ww rm 2)") {
+		t.Fatalf("expected hint with only first index 'ww rm 2)', got %q", got)
+	}
+	if strings.Contains(got, "ww rm 2 3") {
+		t.Fatalf("should not show all indices, got %q", got)
+	}
+}
+
+func TestRenderMenuMergedWithDirtyNotSafeToRemove(t *testing.T) {
+	var buf bytes.Buffer
+
+	items := []worktree.Worktree{
+		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true},
+		{Index: 2, BranchLabel: "fix/typo", Path: "/wt/fix-typo", IsMerged: true, IsDirty: true, Unstaged: 2},
+	}
+
+	RenderMenu(&buf, items)
+	got := buf.String()
+
+	if strings.Contains(got, "safe to remove") {
+		t.Fatalf("merged+dirty should not be safe to remove, got %q", got)
 	}
 }
 

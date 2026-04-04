@@ -33,6 +33,7 @@ type Deps interface {
 	RecordWorktreeState(ctx context.Context, repoKey, path string, meta state.WorktreeMetadata) error
 	WorktreeGitPath(ctx context.Context, worktreePath string, rel string) (string, error)
 	DefaultBranch(ctx context.Context) (string, error)
+	AnnotateExtendedStatus(ctx context.Context, items []worktree.Worktree, baseBranch string) error
 	PreviewRemoval(ctx context.Context, item worktree.Worktree, baseBranch string) (git.RemovalPreview, error)
 	RemoveWorktree(ctx context.Context, item worktree.Worktree, opts git.RemoveOptions) (git.RemoveResult, error)
 }
@@ -125,6 +126,10 @@ func (d RealDeps) DefaultBranch(ctx context.Context) (string, error) {
 	return git.DefaultBranch(ctx, git.ExecRunner{})
 }
 
+func (d RealDeps) AnnotateExtendedStatus(ctx context.Context, items []worktree.Worktree, baseBranch string) error {
+	return git.AnnotateExtendedStatus(ctx, git.ExecRunner{}, items, baseBranch)
+}
+
 func (d RealDeps) PreviewRemoval(ctx context.Context, item worktree.Worktree, baseBranch string) (git.RemovalPreview, error) {
 	return git.PreviewRemoval(ctx, git.ExecRunner{}, item, baseBranch)
 }
@@ -187,6 +192,17 @@ func runInit(args []string, out io.Writer, errOut io.Writer) int {
 	return 0
 }
 
+// annotateExtendedStatusBestEffort calls AnnotateExtendedStatus if DefaultBranch
+// can be resolved. Errors are swallowed — if git commands fail, the list shows
+// with basic info only.
+func annotateExtendedStatusBestEffort(ctx context.Context, deps Deps, items []worktree.Worktree) {
+	baseBranch, err := deps.DefaultBranch(ctx)
+	if err != nil {
+		return
+	}
+	_ = deps.AnnotateExtendedStatus(ctx, items, baseBranch)
+}
+
 func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut io.Writer, deps Deps) int {
 	if len(args) > 0 && args[0] == "--fzf" {
 		if len(args) > 1 {
@@ -199,6 +215,8 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 			return writeWorktreeError(errOut, err)
 		}
 		warnStateIssue(errOut, warn)
+
+		annotateExtendedStatusBestEffort(ctx, deps, items)
 
 		selected, err := deps.SelectWorktreeWithFzf(ctx, items)
 		if err != nil {
@@ -225,6 +243,8 @@ func runSwitchPath(ctx context.Context, args []string, in io.Reader, out io.Writ
 			return writeWorktreeError(errOut, err)
 		}
 		warnStateIssue(errOut, warn)
+
+		annotateExtendedStatusBestEffort(ctx, deps, items)
 
 		selected, err := selectInteractiveWorktree(ctx, in, errOut, items, deps, false)
 		if err != nil {
@@ -305,6 +325,8 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 		warnStateIssue(errOut, warn)
 	}
 
+	annotateExtendedStatusBestEffort(ctx, deps, items)
+
 	entries, err := filterListEntries(decorateListEntries(items, metadata), cfg.filters, time.Now())
 	if err != nil {
 		return writeCommandError("list", out, errOut, cfg.json, err)
@@ -333,6 +355,12 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 				"last_used_at": entry.meta.LastUsedAt,
 				"label":        entry.meta.Label,
 				"ttl":          entry.meta.TTL,
+				"merged":       item.IsMerged,
+				"ahead":        item.Ahead,
+				"behind":       item.Behind,
+				"staged":       item.Staged,
+				"unstaged":     item.Unstaged,
+				"untracked":    item.Untracked,
 			})
 		}
 		return writeJSONSuccess(out, "list", payload)

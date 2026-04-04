@@ -7,10 +7,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripAnsi(s string) string {
+	return ansiRe.ReplaceAllString(s, "")
+}
 
 func TestCLISelectsOldestIndexPath(t *testing.T) {
 	repo := newTestRepo(t)
@@ -186,11 +193,17 @@ func TestCLIListShowsDirtyWorktrees(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "│ 2     │ [DIRTY]           │ alpha") {
-		t.Fatalf("expected dirty alpha in list output, got %q", stdout.String())
+	out := stdout.String()
+	stripped := stripAnsi(out)
+	// alpha has an untracked file — CHANGES column should show ?1
+	if !strings.Contains(stripped, "CHANGES") {
+		t.Fatalf("expected CHANGES column header in list output, got %q", stripped)
 	}
-	if !strings.Contains(stdout.String(), "│ 1     │ [CURRENT]         │ main") {
-		t.Fatalf("expected current main in list output, got %q", stdout.String())
+	if !strings.Contains(stripped, "?1") {
+		t.Fatalf("expected ?1 in changes column for dirty alpha, got %q", stripped)
+	}
+	if !strings.Contains(stripped, "[CURRENT]") {
+		t.Fatalf("expected [CURRENT] tag for main, got %q", stripped)
 	}
 }
 

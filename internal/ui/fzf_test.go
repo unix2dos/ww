@@ -15,10 +15,12 @@ func TestFormatFzfCandidatesIncludesIndexStatusBranchAndPath(t *testing.T) {
 		{Index: 2, BranchLabel: "feat-a", Path: "/repo/.worktrees/feat-a", IsDirty: true},
 	}))
 
-	if !strings.Contains(got, "1\t[CURRENT] [DIRTY]\tmain  \t/repo") {
+	// IsDirty without IsMerged shows no DIRTY tag; IsCurrent shows [CURRENT]
+	if !strings.Contains(got, "1\t[CURRENT]         \tmain  \t/repo") {
 		t.Fatalf("expected current candidate, got %q", got)
 	}
-	if !strings.Contains(got, "2\t[DIRTY]          \tfeat-a\t/repo/.worktrees/feat-a") {
+	// dirty-only without merged: empty status field (padded to humanStatusWidth=18)
+	if !strings.Contains(got, "2\t                  \tfeat-a\t/repo/.worktrees/feat-a") {
 		t.Fatalf("expected non-current candidate, got %q", got)
 	}
 }
@@ -54,7 +56,7 @@ func TestFormatFzfCandidatesPadsStatusAndBranchFields(t *testing.T) {
 func TestSelectWorktreeWithFzfReturnsSelectedWorktree(t *testing.T) {
 	runner := &fakeFzfRunner{
 		lookPath: "/usr/bin/fzf",
-		stdout:   []byte("2\t[DIRTY]\tfeat-a\t/repo/.worktrees/feat-a\n"),
+		stdout:   []byte("2\t                  \tfeat-a\t/repo/.worktrees/feat-a\n"),
 	}
 
 	got, err := SelectWorktreeWithFzf(context.Background(), []worktree.Worktree{
@@ -84,7 +86,7 @@ func TestSelectWorktreeWithFzfReturnsSelectedWorktree(t *testing.T) {
 func TestSelectWorktreeWithFzfFocusesCurrentWorktreeByDefault(t *testing.T) {
 	runner := &fakeFzfRunner{
 		lookPath: "/usr/bin/fzf",
-		stdout:   []byte("2\t[CURRENT] [DIRTY]\tmain\t/repo\n"),
+		stdout:   []byte("2\t[CURRENT]          \tmain\t/repo\n"),
 	}
 
 	_, err := SelectWorktreeWithFzf(context.Background(), []worktree.Worktree{
@@ -117,6 +119,20 @@ func TestSelectWorktreeWithFzfReturnsErrSelectionCanceled(t *testing.T) {
 	})
 	if !errors.Is(err, ErrSelectionCanceled) {
 		t.Fatalf("expected ErrSelectionCanceled, got %v", err)
+	}
+}
+
+func TestFormatFzfCandidatesShowsMergedTag(t *testing.T) {
+	got := string(formatFzfCandidates([]worktree.Worktree{
+		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true},
+		{Index: 2, BranchLabel: "fix/typo", Path: "/wt/fix-typo", IsMerged: true},
+	}))
+
+	if !strings.Contains(got, "[MERGED]") {
+		t.Fatalf("expected [MERGED] in fzf output, got %q", got)
+	}
+	if !strings.Contains(got, "[CURRENT]") {
+		t.Fatalf("expected [CURRENT] in fzf output, got %q", got)
 	}
 }
 

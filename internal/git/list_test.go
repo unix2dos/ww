@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ww/internal/worktree"
 )
 
 func TestListWorktreesReturnsRepoKeyAndRawItems(t *testing.T) {
@@ -198,6 +200,74 @@ func TestCurrentRepoKeyMapsNonRepoError(t *testing.T) {
 	_, err := CurrentRepoKey(context.Background(), runner)
 	if !errors.Is(err, ErrNotGitRepository) {
 		t.Fatalf("expected ErrNotGitRepository, got %v", err)
+	}
+}
+
+func TestAnnotateExtendedStatusPopulatesAllFields(t *testing.T) {
+	runner := fakeRunner{
+		outputs: map[string]string{
+			// FileChangeCounts for worktree 1 (main — skip merged/ahead-behind)
+			key("git", "-C", "/repo", "status", "--porcelain", "--", ".", ":(exclude).worktrees"): "A  new.go\n M old.go\n",
+			// FileChangeCounts for worktree 2
+			key("git", "-C", "/repo/.worktrees/feat-a", "status", "--porcelain", "--", ".", ":(exclude).worktrees"): "?? scratch.txt\n",
+			// AheadBehind for worktree 2
+			key("git", "-C", "/repo/.worktrees/feat-a", "rev-list", "--left-right", "--count", "feat-a...main"): "3\t1\n",
+			// BranchMergedIntoBase for worktree 2
+			key("git", "-C", "/repo/.worktrees/feat-a", "branch", "--format=%(refname:short)", "--merged", "main"): "main\n",
+		},
+	}
+
+	items := []worktree.Worktree{
+		{Path: "/repo", BranchRef: "refs/heads/main", BranchLabel: "main", IsCurrent: true},
+		{Path: "/repo/.worktrees/feat-a", BranchRef: "refs/heads/feat-a", BranchLabel: "feat-a"},
+	}
+
+	err := AnnotateExtendedStatus(context.Background(), runner, items, "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// main: should have file changes but no merged/ahead/behind
+	if items[0].Staged != 1 || items[0].Unstaged != 1 {
+		t.Fatalf("expected main staged=1 unstaged=1, got %d %d", items[0].Staged, items[0].Unstaged)
+	}
+	if items[0].IsMerged || items[0].Ahead != 0 || items[0].Behind != 0 {
+		t.Fatalf("expected main to skip branch-level checks, got merged=%v ahead=%d behind=%d", items[0].IsMerged, items[0].Ahead, items[0].Behind)
+	}
+	if !items[0].IsDirty {
+		t.Fatal("expected main IsDirty=true")
+	}
+
+	// feat-a: should have file changes and NOT be merged (since "feat-a" is not in the merged list)
+	if items[1].Untracked != 1 {
+		t.Fatalf("expected feat-a untracked=1, got %d", items[1].Untracked)
+	}
+	if items[1].Ahead != 3 || items[1].Behind != 1 {
+		t.Fatalf("expected feat-a ahead=3 behind=1, got %d %d", items[1].Ahead, items[1].Behind)
+	}
+	if items[1].IsDirty != true {
+		t.Fatal("expected feat-a IsDirty=true")
+	}
+}
+
+func TestAnnotateExtendedStatusSkipsDetachedHead(t *testing.T) {
+	runner := fakeRunner{
+		outputs: map[string]string{
+			key("git", "-C", "/repo/.worktrees/detached", "status", "--porcelain", "--", ".", ":(exclude).worktrees"): "",
+		},
+	}
+
+	items := []worktree.Worktree{
+		{Path: "/repo/.worktrees/detached", BranchLabel: "(detached)", IsDetached: true},
+	}
+
+	err := AnnotateExtendedStatus(context.Background(), runner, items, "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if items[0].IsMerged || items[0].Ahead != 0 || items[0].Behind != 0 {
+		t.Fatalf("expected detached to skip branch checks, got merged=%v ahead=%d behind=%d", items[0].IsMerged, items[0].Ahead, items[0].Behind)
 	}
 }
 

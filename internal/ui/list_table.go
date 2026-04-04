@@ -9,6 +9,10 @@ import (
 
 const listIndexWidth = len(humanIndexHeader)
 const listPathWidth = 48
+const listABHeader = "AHEAD/BEHIND"
+const listChangesHeader = "CHANGES"
+const listABWidth = len(listABHeader)     // 12
+const listChangesWidth = len(listChangesHeader) // 7
 
 type ListTableEntry struct {
 	Worktree worktree.Worktree
@@ -25,7 +29,7 @@ func FormatListTable(entries []ListTableEntry) string {
 
 	buf.WriteString(listTableBorder("┌", "┬", "┐", branchWidth))
 	buf.WriteByte('\n')
-	buf.WriteString(listTableRow(humanIndexHeader, humanStatusHeader, humanBranchHeader, humanPathHeader, branchWidth))
+	buf.WriteString(listTableRow(humanIndexHeader, humanStatusHeader, humanBranchHeader, listABHeader, listChangesHeader, humanPathHeader, branchWidth))
 	buf.WriteByte('\n')
 	buf.WriteString(listTableBorder("├", "┼", "┤", branchWidth))
 	buf.WriteByte('\n')
@@ -66,18 +70,29 @@ func listTableRows(entry ListTableEntry, branchWidth int) []string {
 		index := ""
 		status := ""
 		branch := ""
+		ab := ""
+		changes := ""
 		if i == 0 {
 			index = fmt.Sprintf("%d", entry.Worktree.Index)
 			status = StatusText(entry.Worktree)
 			branch = entry.Worktree.BranchLabel
+			ab = FormatAheadBehind(entry.Worktree.Ahead, entry.Worktree.Behind)
+			changes = FormatFileChanges(entry.Worktree.Staged, entry.Worktree.Unstaged, entry.Worktree.Untracked)
 		}
-		rows = append(rows, listTableRow(index, status, branch, pathLine, branchWidth))
+		rows = append(rows, listTableRow(index, status, branch, ab, changes, pathLine, branchWidth))
 	}
 	return rows
 }
 
-func listTableRow(index, status, branch, path string, branchWidth int) string {
-	return fmt.Sprintf("│ %-*s │ %-*s │ %-*s │ %-*s │", listIndexWidth, index, humanStatusWidth, status, branchWidth, branch, listPathWidth, path)
+func listTableRow(index, status, branch, ab, changes, path string, branchWidth int) string {
+	return fmt.Sprintf("│ %-*s │ %-*s │ %-*s │ %s │ %s │ %-*s │",
+		listIndexWidth, index,
+		humanStatusWidth, status,
+		branchWidth, branch,
+		PadRight(ab, listABWidth),
+		PadRight(changes, listChangesWidth),
+		listPathWidth, path,
+	)
 }
 
 func listTableBorder(left, mid, right string, branchWidth int) string {
@@ -85,6 +100,8 @@ func listTableBorder(left, mid, right string, branchWidth int) string {
 		strings.Repeat("─", listIndexWidth+2) + mid +
 		strings.Repeat("─", humanStatusWidth+2) + mid +
 		strings.Repeat("─", branchWidth+2) + mid +
+		strings.Repeat("─", listABWidth+2) + mid +
+		strings.Repeat("─", listChangesWidth+2) + mid +
 		strings.Repeat("─", listPathWidth+2) +
 		right
 }

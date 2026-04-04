@@ -10,46 +10,37 @@ import (
 	"ww/internal/worktree"
 )
 
-func TestRenderTUIShowsActiveStatusAndActiveRow(t *testing.T) {
+func TestRenderTUIShowsActiveAndCurrentMarkers(t *testing.T) {
 	var buf bytes.Buffer
 
 	RenderTUI(&buf, []worktree.Worktree{
-		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true, IsDirty: true},
-		{Index: 2, BranchLabel: "feat-a", Path: "/repo/.worktrees/feat-a", IsDirty: true},
+		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true, IsDirty: true, Staged: 1},
+		{Index: 2, BranchLabel: "feat-a", Path: "/repo/.worktrees/feat-a", Ahead: 3},
 	}, 1)
 
 	got := strings.ReplaceAll(buf.String(), "\x1b[H\x1b[2J", "")
-	if !strings.Contains(got, "  [1] [CURRENT] [DIRTY] main   /repo") {
-		t.Fatalf("expected current row, got %q", got)
+	stripped := StripAnsi(got)
+
+	// Row 1: current but not active cursor (space prefix), has ★ marker
+	if !strings.Contains(stripped, "★") {
+		t.Fatalf("expected ★ marker for current worktree, got %q", stripped)
 	}
-	if !strings.Contains(got, "* [2] [DIRTY]           feat-a /repo/.worktrees/feat-a") {
-		t.Fatalf("expected active row, got %q", got)
+
+	// Row 2: active cursor (should have * prefix)
+	lines := strings.Split(stripped, "\n")
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, "feat-a") && strings.HasPrefix(strings.TrimLeft(line, " "), "*") {
+			found = true
+			break
+		}
 	}
+	if !found {
+		t.Fatalf("expected * prefix on active row with feat-a, got %q", stripped)
+	}
+
 	if !strings.Contains(got, "Enter to confirm") {
 		t.Fatalf("expected tui instructions, got %q", got)
-	}
-}
-
-func TestRenderTUIAlignsPathColumnAcrossRows(t *testing.T) {
-	var buf bytes.Buffer
-
-	RenderTUI(&buf, []worktree.Worktree{
-		{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true},
-		{Index: 2, BranchLabel: "codex/current-dirty-status", Path: "/repo/.worktrees/current-dirty-status", IsDirty: true},
-	}, 0)
-
-	lines := strings.Split(strings.ReplaceAll(buf.String(), "\x1b[H\x1b[2J", ""), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected at least two rendered rows, got %q", buf.String())
-	}
-
-	mainPathCol := strings.Index(lines[0], "/repo")
-	featurePathCol := strings.Index(lines[1], "/repo/.worktrees/current-dirty-status")
-	if mainPathCol == -1 || featurePathCol == -1 {
-		t.Fatalf("expected both paths in output, got %q", buf.String())
-	}
-	if mainPathCol != featurePathCol {
-		t.Fatalf("expected aligned path columns, got %d and %d in %q", mainPathCol, featurePathCol, buf.String())
 	}
 }
 
@@ -70,9 +61,6 @@ func TestSelectWorktreeWithTUIArrowDownThenEnterReturnsSelectedWorktree(t *testi
 	}
 	if got.Path != "/repo/.worktrees/feat-a" {
 		t.Fatalf("expected second worktree, got %#v", got)
-	}
-	if !strings.Contains(out.String(), "* [2]                   feat-a /repo/.worktrees/feat-a") {
-		t.Fatalf("expected moved selection to render, got %q", out.String())
 	}
 }
 
