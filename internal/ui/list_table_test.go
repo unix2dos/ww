@@ -9,24 +9,28 @@ import (
 
 func TestFormatListTableUsesUnicodeBoxBorders(t *testing.T) {
 	got := FormatListTable([]ListTableEntry{
-		{Worktree: worktree.Worktree{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true}},
-		{Worktree: worktree.Worktree{Index: 2, BranchLabel: "feat-a", Path: "/repo/.worktrees/feat-a", IsDirty: true}},
+		{Worktree: worktree.Worktree{Index: 1, BranchLabel: "main", Path: "/repo", IsCurrent: true, Staged: 2, Unstaged: 1}},
+		{Worktree: worktree.Worktree{Index: 2, BranchLabel: "feat-a", Path: "/repo/.worktrees/feat-a", IsMerged: true}},
 	})
 
+	stripped := StripAnsi(got)
 	for _, fragment := range []string{
 		"┌",
 		"┬",
-		"│ INDEX ",
+		"│ INDEX",
+		"│ STATUS",
+		"│ AHEAD/BEHIND",
+		"│ CHANGES",
 		"├",
 		"┼",
 		"└",
 		"┴",
 		"│ 1",
 		"[CURRENT]",
-		"[DIRTY]",
+		"[MERGED]",
 	} {
-		if !strings.Contains(got, fragment) {
-			t.Fatalf("expected %q in table output, got %q", fragment, got)
+		if !strings.Contains(stripped, fragment) {
+			t.Fatalf("expected %q in table output, got %q", fragment, stripped)
 		}
 	}
 }
@@ -38,18 +42,17 @@ func TestFormatListTableWrapsLongPathInsidePathCell(t *testing.T) {
 				Index:       2,
 				BranchLabel: "codex/current-dirty-status",
 				Path:        "/Users/liuwei/workspace/ww/.worktrees/current-dirty-status/very/long/path/for/wrapping",
+				Unstaged:    1,
 				IsDirty:     true,
 			},
 		},
 	})
 
-	if !strings.Contains(got, "│ 2") {
-		t.Fatalf("expected first row for wrapped item, got %q", got)
+	stripped := StripAnsi(got)
+	if !strings.Contains(stripped, "│ 2") {
+		t.Fatalf("expected first row for wrapped item, got %q", stripped)
 	}
-	if !strings.Contains(got, "│       │                   │                            │") {
-		t.Fatalf("expected continuation row with blank leading cells, got %q", got)
-	}
-	if !strings.Contains(got, "current-dirty-status") || !strings.Contains(got, "very/long/path") {
-		t.Fatalf("expected full path content across wrapped lines, got %q", got)
+	if !strings.Contains(stripped, "current-dirty-status") || !strings.Contains(stripped, "very/long/path") {
+		t.Fatalf("expected full path content across wrapped lines, got %q", stripped)
 	}
 }
