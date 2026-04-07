@@ -286,9 +286,53 @@ Available helper-driven filters:
 ww new feat-a
 ```
 
-This creates branch `feat-a` from the current `HEAD` in `./.worktrees/feat-a`, then switches into it.
+This creates branch `feat-a` from the current `HEAD` in `./.worktrees/feat-a`, copies git-ignored config files from the main worktree into the new one, then switches into it.
 
 For metadata-aware creation, use `ww-helper new-path --json --label ... --ttl ... -m "intent"`. The `-m` flag sets a one-line intent that appears in `ww list --verbose` and `ww rm` safety output.
+
+#### Ignored-File Sync
+
+When a new worktree is created, `ww new` automatically copies git-ignored files from the main worktree — typically `.env`, local config files, and development certificates — so the new workspace is immediately usable.
+
+**Flags:**
+
+```bash
+ww new feat-a                  # default: sync enabled
+ww new feat-a --no-sync        # skip sync for this run
+ww new feat-a --sync-dry-run   # preview what would be copied without writing files
+```
+
+**What gets skipped:**
+
+Large dependency and build directories are excluded by default:
+
+- JS/TS: `node_modules/`, `.next/`, `.nuxt/`, `dist/`, `build/`, `.vite/`, `.turbo/`, `coverage/`
+- Python: `__pycache__/`, `.venv/`, `venv/`, `env/`, `.pytest_cache/`
+- Go/Rust/Java: `vendor/`, `target/`, `.gradle/`
+- General: `tmp/`, `temp/`, `logs/`, `.cache/`, `.DS_Store`
+
+Any file at or above 1 MiB is also skipped as a safety net.
+
+**Configuration (`~/.config/ww/config.json`):**
+
+```json
+{
+  "version": 1,
+  "sync": {
+    "enabled": true,
+    "max_file_size": 1048576,
+    "blacklist_extra": ["my-secrets/", "local-certs/"],
+    "blacklist_override": null
+  }
+}
+```
+
+- `enabled`: set to `false` to disable sync globally.
+- `max_file_size`: per-file size cap in bytes (default 1 MiB).
+- `blacklist_extra`: additional path segments appended to the built-in blacklist.
+- `blacklist_override`: non-null value replaces the built-in blacklist entirely; an empty array `[]` disables the blacklist completely.
+
+The config file is optional. A missing file uses all built-in defaults. `XDG_CONFIG_HOME` is honoured; the default path is `~/.config/ww/config.json`.
 
 ### Remove
 

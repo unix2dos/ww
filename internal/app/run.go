@@ -14,12 +14,27 @@ import (
 	"sync"
 	"time"
 
+	"ww/internal/config"
 	"ww/internal/git"
 	"ww/internal/state"
+	"ww/internal/syncignored"
 	"ww/internal/tasknote"
 	"ww/internal/ui"
 	"ww/internal/worktree"
 )
+
+// syncIgnoredFn is the function used by runNewPath to sync ignored files into
+// a freshly created worktree. It is a package-level variable so tests can
+// replace it with a noop (see run_sync_test.go).
+var syncIgnoredFn = func(ctx context.Context, mainRoot, target string, opts syncignored.Options) (syncignored.Result, error) {
+	return syncignored.Sync(ctx, git.ExecRunner{}, mainRoot, target, opts)
+}
+
+// loadSyncConfigFn returns the user's config. Package-level var for the same
+// test-override reason as syncIgnoredFn.
+var loadSyncConfigFn = func() (config.Config, error) {
+	return config.LoadDefault()
+}
 
 type Deps interface {
 	CurrentRepoKey(ctx context.Context) (string, error)
@@ -407,11 +422,13 @@ func listVerboseDetail(ctx context.Context, deps Deps, entry listEntry, verbose 
 }
 
 type newPathConfig struct {
-	json    bool
-	name    string
-	label   string
-	ttl     string
-	message string
+	json        bool
+	name        string
+	label       string
+	ttl         string
+	message     string
+	noSync      bool
+	syncDryRun  bool
 }
 
 func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Writer, deps Deps) int {
@@ -457,7 +474,100 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 	warnStateIssue(errOut, recordWorktreeStateBestEffort(ctx, deps, repoKey, path, meta))
 	warnStateIssue(errOut, createTaskNoteIfLabeled(ctx, deps, path, cfg.name, cfg.label, cfg.message, createdAt))
 	warnStateIssue(errOut, touchWorktreeStateBestEffort(ctx, deps, repoKey, path))
+	runSyncIgnored(ctx, errOut, repoKey, path, cfg)
 	return 0
+}
+
+// runSyncIgnored copies git-ignored files from the main worktree into the
+// freshly created one. It is best-effort: every error is downgraded to a
+// warning on stderr so `ww new` always reports success if the worktree itself
+// was created.
+//
+// Called only on the non-JSON success path; JSON callers (machines) don't
+// need this implicit behaviour and can manage sync themselves.
+func runSyncIgnored(ctx context.Context, errOut io.Writer, repoKey, newPath string, cfg newPathConfig) {
+	if cfg.noSync {
+		return
+	}
+
+	mainRoot := mainWorktreeRootFromRepoKey(repoKey)
+	if mainRoot == "" || mainRoot == newPath {
+		return
+	}
+
+	userCfg, cfgErr := loadSyncConfigFn()
+	if cfgErr != nil {
+		fmt.Fprintf(errOut, "warning: sync: %v\n", cfgErr)
+		// Fall through with defaults.
+	}
+
+	if !userCfg.Sync.SyncEnabled() {
+		return
+	}
+
+	opts := syncignored.Options{
+		Enabled:   true,
+		Blacklist: userCfg.Sync.EffectiveBlacklist(syncignored.DefaultBlacklist),
+		DryRun:    cfg.syncDryRun,
+	}
+	if v := userCfg.Sync.EffectiveMaxFileSize(); v > 0 {
+		opts.MaxFileSize = v
+	}
+
+	res, err := syncIgnoredFn(ctx, mainRoot, newPath, opts)
+	if err != nil {
+		fmt.Fprintf(errOut, "warning: sync: %v\n", err)
+		return
+	}
+
+	printSyncResult(errOut, res)
+}
+
+// mainWorktreeRootFromRepoKey extracts the main worktree's root directory
+// from a git "repo key" (which is the absolute path to the .git directory or
+// gitfile). Returns "" if the shape is unexpected.
+func mainWorktreeRootFromRepoKey(repoKey string) string {
+	if repoKey == "" {
+		return ""
+	}
+	if filepath.Base(repoKey) == ".git" {
+		return filepath.Dir(repoKey)
+	}
+	return ""
+}
+
+// printSyncResult writes a short human-readable summary of what was (or would
+// be) copied. Silent when nothing interesting happened.
+func printSyncResult(errOut io.Writer, res syncignored.Result) {
+	if len(res.Copied) == 0 && len(res.Skipped) == 0 {
+		return
+	}
+	prefix := "synced"
+	if res.DryRun {
+		prefix = "[dry-run] would sync"
+	}
+	if len(res.Copied) > 0 {
+		preview := res.Copied
+		const maxPreview = 5
+		if len(preview) > maxPreview {
+			preview = preview[:maxPreview]
+			fmt.Fprintf(errOut, "%s %d ignored files (%s, ...)\n",
+				prefix, len(res.Copied), strings.Join(preview, ", "))
+		} else {
+			fmt.Fprintf(errOut, "%s %d ignored files (%s)\n",
+				prefix, len(res.Copied), strings.Join(preview, ", "))
+		}
+	}
+	if res.DryRun {
+		for _, s := range res.Skipped {
+			switch s.Reason {
+			case syncignored.SkipTooLarge:
+				fmt.Fprintf(errOut, "[dry-run] skip %s (%d bytes, exceeds max_file_size)\n", s.Path, s.Size)
+			case syncignored.SkipBlacklisted:
+				fmt.Fprintf(errOut, "[dry-run] skip %s (blacklisted)\n", s.Path)
+			}
+		}
+	}
 }
 
 func createTaskNoteIfLabeled(ctx context.Context, deps Deps, worktreePath, branch, label, message string, createdAt time.Time) error {
@@ -885,6 +995,10 @@ func parseNewPathArgs(args []string) (newPathConfig, error) {
 				return cfg, appError{Code: "INVALID_DURATION", Message: err.Error(), ExitCode: 2}
 			}
 			cfg.ttl = spec.String()
+		case arg == "--no-sync":
+			cfg.noSync = true
+		case arg == "--sync-dry-run":
+			cfg.syncDryRun = true
 		case strings.HasPrefix(arg, "-"):
 			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
 		default:

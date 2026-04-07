@@ -20,7 +20,7 @@ The demo is now a workflow overview in about a minute, with a short `ww-helper -
 ## Why ww
 
 - `ww` changes the current shell directory, so switching worktrees feels like changing folders, not launching a side tool.
-- `ww new <name>` creates a fresh branch workspace and moves your shell into it immediately.
+- `ww new <name>` creates a fresh branch workspace, copies git-ignored config files (`.env`, local configs, etc.) from the main worktree, and moves your shell into it immediately.
 - `ww list` shows all worktrees at a glance with ahead/behind counts and file changes; `ww list --verbose` adds labels, intent, and metadata.
 - `ww rm` explains what will be removed, what will be kept, and what looks risky before you confirm.
 - `ww rm --cleanup` lets you review old worktrees and delete the ones you no longer need.
