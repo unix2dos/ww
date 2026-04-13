@@ -30,7 +30,7 @@ func TestListWorktreesReturnsRepoKeyAndRawItems(t *testing.T) {
 		},
 	}
 
-	repoKey, got, err := ListWorktrees(context.Background(), runner)
+	repoKey, got, _, err := ListWorktrees(context.Background(), runner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestListWorktreesMapsNonRepoError(t *testing.T) {
 		},
 	}
 
-	_, _, err := ListWorktrees(context.Background(), runner)
+	_, _, _, err := ListWorktrees(context.Background(), runner)
 	if !errors.Is(err, ErrNotGitRepository) {
 		t.Fatalf("expected ErrNotGitRepository, got %v", err)
 	}
@@ -83,7 +83,7 @@ func TestListWorktreesIgnoresStderrOnSuccess(t *testing.T) {
 		},
 	}
 
-	repoKey, got, err := ListWorktrees(context.Background(), runner)
+	repoKey, got, _, err := ListWorktrees(context.Background(), runner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestListWorktreesAnnotatesCreationTimesWhenPathsExist(t *testing.T) {
 		},
 	}
 
-	_, got, err := ListWorktrees(context.Background(), runner)
+	_, got, _, err := ListWorktrees(context.Background(), runner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestListWorktreesAnnotatesDirtyState(t *testing.T) {
 		},
 	}
 
-	_, got, err := ListWorktrees(context.Background(), runner)
+	_, got, _, err := ListWorktrees(context.Background(), runner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

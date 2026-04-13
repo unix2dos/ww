@@ -50,7 +50,11 @@ func ParsePorcelainZ(raw string) ([]Worktree, error) {
 			current.BranchRef = value
 			current.BranchLabel = branchLabel(value)
 		case "HEAD":
-		case "locked", "prunable", "bare":
+		case "locked", "bare":
+		case "prunable":
+			if current != nil {
+				current.IsPrunable = true
+			}
 		default:
 			return nil, fmt.Errorf("unsupported token: %q", key)
 		}

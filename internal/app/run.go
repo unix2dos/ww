@@ -38,7 +38,7 @@ var loadSyncConfigFn = func() (config.Config, error) {
 
 type Deps interface {
 	CurrentRepoKey(ctx context.Context) (string, error)
-	ListWorktrees(ctx context.Context) (string, []worktree.Worktree, error)
+	ListWorktrees(ctx context.Context) (string, []worktree.Worktree, int, error)
 	SelectWorktreeWithFzf(ctx context.Context, items []worktree.Worktree) (worktree.Worktree, error)
 	SelectWorktreeWithTUI(in io.Reader, out io.Writer, items []worktree.Worktree) (worktree.Worktree, error)
 	CreateWorktree(ctx context.Context, name string) (string, error)
@@ -81,7 +81,7 @@ func ensureStore() (*state.Store, error) {
 	return defaultStateStore.store, defaultStateStore.err
 }
 
-func (d RealDeps) ListWorktrees(ctx context.Context) (string, []worktree.Worktree, error) {
+func (d RealDeps) ListWorktrees(ctx context.Context) (string, []worktree.Worktree, int, error) {
 	return git.ListWorktrees(ctx, git.ExecRunner{})
 }
 
@@ -868,14 +868,18 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 }
 
 func orderedWorktrees(ctx context.Context, deps Deps) (string, []worktree.Worktree, map[string]state.WorktreeMetadata, error, error) {
-	repoKey, items, err := deps.ListWorktrees(ctx)
+	repoKey, items, prunableCount, err := deps.ListWorktrees(ctx)
 	if err != nil {
 		return "", nil, nil, nil, err
+	}
+	var prunableWarn error
+	if prunableCount > 0 {
+		prunableWarn = fmt.Errorf("warning: skipped %d prunable worktree(s) with missing directories, run 'git worktree prune' to clean up", prunableCount)
 	}
 	metadata, err := deps.LoadWorktreeMetadata(ctx, repoKey)
 	if err != nil {
 		normalized := worktree.Normalize(items)
-		return repoKey, normalized, map[string]state.WorktreeMetadata{}, fmt.Errorf("state load unavailable: %w", err), nil
+		return repoKey, normalized, map[string]state.WorktreeMetadata{}, errors.Join(prunableWarn, fmt.Errorf("state load unavailable: %w", err)), nil
 	}
 	for i := range items {
 		meta := metadata[items[i].Path]
@@ -884,7 +888,7 @@ func orderedWorktrees(ctx context.Context, deps Deps) (string, []worktree.Worktr
 			items[i].CreatedAt = meta.CreatedAt
 		}
 	}
-	return repoKey, worktree.Normalize(items), metadata, nil, nil
+	return repoKey, worktree.Normalize(items), metadata, prunableWarn, nil
 }
 
 func parseRemoveArgs(args []string) (removeConfig, error) {

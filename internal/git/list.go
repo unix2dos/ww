@@ -29,23 +29,33 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
-func ListWorktrees(ctx context.Context, runner Runner) (string, []worktree.Worktree, error) {
+func ListWorktrees(ctx context.Context, runner Runner) (string, []worktree.Worktree, int, error) {
 	currentPath, repoKey, err := currentRepoContext(ctx, runner)
 	if err != nil {
-		return "", nil, err
+		return "", nil, 0, err
 	}
 
 	worktreeOut, worktreeErr, err := runner.Run(ctx, "git", "-C", currentPath, "worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		if isNotGitRepository(err, worktreeOut, worktreeErr) {
-			return "", nil, ErrNotGitRepository
+			return "", nil, 0, ErrNotGitRepository
 		}
-		return "", nil, fmt.Errorf("git worktree list: %w", err)
+		return "", nil, 0, fmt.Errorf("git worktree list: %w", err)
 	}
 
-	items, err := worktree.ParsePorcelainZ(string(worktreeOut))
+	allItems, err := worktree.ParsePorcelainZ(string(worktreeOut))
 	if err != nil {
-		return "", nil, err
+		return "", nil, 0, err
+	}
+
+	var prunableCount int
+	items := allItems[:0]
+	for _, wt := range allItems {
+		if wt.IsPrunable {
+			prunableCount++
+		} else {
+			items = append(items, wt)
+		}
 	}
 
 	for i := range items {
@@ -58,12 +68,12 @@ func ListWorktrees(ctx context.Context, runner Runner) (string, []worktree.Workt
 	for i := range items {
 		dirty, err := worktreeDirty(ctx, runner, items[i].Path)
 		if err != nil {
-			return "", nil, err
+			return "", nil, 0, err
 		}
 		items[i].IsDirty = dirty
 	}
 
-	return repoKey, items, nil
+	return repoKey, items, prunableCount, nil
 }
 
 func CurrentRepoKey(ctx context.Context, runner Runner) (string, error) {

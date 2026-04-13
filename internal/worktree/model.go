@@ -7,6 +7,7 @@ type Worktree struct {
 	IsDetached  bool
 	IsCurrent   bool
 	IsDirty     bool
+	IsPrunable  bool
 	CreatedAt   int64
 	LastUsedAt  int64
 	Index       int

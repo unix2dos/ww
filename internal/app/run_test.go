@@ -2221,11 +2221,11 @@ func (f fakeDeps) CurrentRepoKey(context.Context) (string, error) {
 	return f.repoKey, nil
 }
 
-func (f fakeDeps) ListWorktrees(context.Context) (string, []worktree.Worktree, error) {
+func (f fakeDeps) ListWorktrees(context.Context) (string, []worktree.Worktree, int, error) {
 	if f.err != nil {
-		return "", nil, f.err
+		return "", nil, 0, f.err
 	}
-	return f.repoKey, append([]worktree.Worktree(nil), f.worktrees...), nil
+	return f.repoKey, append([]worktree.Worktree(nil), f.worktrees...), 0, nil
 }
 
 func (f fakeDeps) SelectWorktreeWithFzf(context.Context, []worktree.Worktree) (worktree.Worktree, error) {
