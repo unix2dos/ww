@@ -11,8 +11,8 @@ func TestPagesDemoContract(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 
 	readme := mustReadFile(t, filepath.Join(root, "README.md"))
-	if !strings.Contains(readme, "Fast worktree switching for safer parallel work.") {
-		t.Fatalf("expected README landing-page value proposition")
+	if !strings.Contains(readme, "The worktree primitive your AI agents and you share.") {
+		t.Fatalf("expected README to lead with the agent-primitive tagline")
 	}
 	if !strings.Contains(readme, "## Demo") {
 		t.Fatalf("expected README demo section")
@@ -35,8 +35,11 @@ func TestPagesDemoContract(t *testing.T) {
 	if !strings.Contains(readme, "docs/reference.md") {
 		t.Fatalf("expected README to hand off detailed docs to docs/reference.md")
 	}
-	if !strings.Contains(readme, "## For AI Agents") {
+	if !strings.Contains(readme, "## For AI agents and orchestrators") {
 		t.Fatalf("expected README to document the machine-readable entrypoint")
+	}
+	if !strings.Contains(readme, "docs/protocol.md") {
+		t.Fatalf("expected README to link to the wire protocol spec")
 	}
 	if !strings.Contains(readme, "ww-helper list --json") {
 		t.Fatalf("expected README to show ww-helper json usage")
@@ -44,8 +47,11 @@ func TestPagesDemoContract(t *testing.T) {
 	if !strings.Contains(readme, "ww new feat-demo") {
 		t.Fatalf("expected README to document simple worktree creation")
 	}
-	if !strings.Contains(readme, "ww rm --cleanup") {
-		t.Fatalf("expected README to document human cleanup mode")
+	if strings.Contains(readme, "--cleanup") {
+		t.Fatalf("expected README to stop referencing the removed --cleanup flag")
+	}
+	if strings.Contains(readme, "--non-interactive") {
+		t.Fatalf("expected README to stop referencing the removed --non-interactive flag")
 	}
 	if strings.Contains(readme, "ww new feat-a --label agent:claude-code --ttl 24h") {
 		t.Fatalf("expected README to keep metadata flags out of the human path")
