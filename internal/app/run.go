@@ -178,9 +178,36 @@ func Run(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut
 		return runGC(ctx, args[1:], out, errOut, deps)
 	case "rm":
 		return runRemove(ctx, args[1:], in, out, errOut, deps)
+	case "version":
+		return runVersion(args[1:], out, errOut)
 	default:
 		return runSwitchPath(ctx, args, in, out, errOut, deps)
 	}
+}
+
+func runVersion(args []string, out io.Writer, errOut io.Writer) int {
+	jsonMode := false
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			jsonMode = true
+		default:
+			return writeCommandError("version", out, errOut, jsonMode, appError{
+				Code:     "input.invalid_argument",
+				Message:  fmt.Sprintf("unknown option: %s", arg),
+				ExitCode: 2,
+			})
+		}
+	}
+
+	if jsonMode {
+		return writeJSONSuccess(out, "version", map[string]any{
+			"binary": binaryVersion,
+		})
+	}
+
+	fmt.Fprintf(out, "ww-helper %s (protocol %s)\n", binaryVersion, protocolVersion)
+	return 0
 }
 
 func runInit(args []string, out io.Writer, errOut io.Writer) int {
@@ -351,7 +378,7 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 			return writeJSONSuccess(out, "list", []any{})
 		}
 		return writeCommandError("list", out, errOut, cfg.json, appError{
-			Code:     "WORKTREE_NOT_FOUND",
+			Code:     "worktree.not_found",
 			Message:  "no worktrees available",
 			ExitCode: 1,
 		})
@@ -366,8 +393,8 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 				"branch":       item.BranchLabel,
 				"dirty":        item.IsDirty,
 				"active":       item.IsCurrent,
-				"created_at":   item.CreatedAt,
-				"last_used_at": entry.meta.LastUsedAt,
+				"created_at":   nanosToMillis(item.CreatedAt),
+				"last_used_at": nanosToMillis(entry.meta.LastUsedAt),
 				"label":        entry.meta.Label,
 				"ttl":          entry.meta.TTL,
 				"merged":       item.IsMerged,
@@ -764,7 +791,7 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		if selected, matchErr := worktree.Match(items, cfg.target); matchErr == nil && selected.IsCurrent {
 			if cfg.json {
 				return writeCommandError("rm", out, errOut, true, appError{
-					Code:     "REMOVE_CURRENT",
+					Code:     "worktree.remove_current",
 					Message:  "Cannot remove the current worktree. Switch first: ww go <name>",
 					ExitCode: 1,
 				})
@@ -777,7 +804,7 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 	candidates := filterNonCurrent(items)
 	if len(candidates) == 0 {
 		return writeCommandError("rm", out, errOut, cfg.json, appError{
-			Code:     "WORKTREE_NOT_FOUND",
+			Code:     "worktree.not_found",
 			Message:  "no removable worktrees available",
 			ExitCode: 1,
 		})
@@ -806,7 +833,7 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		}
 		if selected.preview.Dirty && !cfg.force {
 			return writeCommandError("rm", out, errOut, true, appError{
-				Code:     "WORKTREE_DIRTY",
+				Code:     "worktree.dirty",
 				Message:  "worktree has uncommitted changes; rerun with --force",
 				ExitCode: 1,
 			})
@@ -900,10 +927,10 @@ func parseRemoveArgs(args []string) (removeConfig, error) {
 		case arg == "--json":
 			cfg.json = true
 		case strings.HasPrefix(arg, "-"):
-			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
+			return cfg, appError{Code: "input.invalid_argument", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
 		default:
 			if cfg.target != "" {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
 			}
 			cfg.target = arg
 		}
@@ -932,7 +959,7 @@ func parseListArgs(args []string) (listConfig, error) {
 			cfg.verbose = true
 		case arg == "--filter":
 			if i+1 >= len(args) {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --filter", ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: "missing value for --filter", ExitCode: 2}
 			}
 			i++
 			filter, err := parseListFilter(args[i])
@@ -947,9 +974,9 @@ func parseListArgs(args []string) (listConfig, error) {
 			}
 			cfg.filters = append(cfg.filters, filter)
 		case strings.HasPrefix(arg, "-"):
-			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
+			return cfg, appError{Code: "input.invalid_argument", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
 		default:
-			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
+			return cfg, appError{Code: "input.invalid_argument", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
 		}
 	}
 	return cfg, nil
@@ -963,21 +990,21 @@ func parseNewPathArgs(args []string) (newPathConfig, error) {
 			cfg.json = true
 		case arg == "--label":
 			if i+1 >= len(args) {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --label", ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: "missing value for --label", ExitCode: 2}
 			}
 			i++
 			cfg.label = strings.TrimSpace(args[i])
 			if cfg.label == "" {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "label cannot be empty", ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: "label cannot be empty", ExitCode: 2}
 			}
 		case strings.HasPrefix(arg, "--label="):
 			cfg.label = strings.TrimSpace(strings.TrimPrefix(arg, "--label="))
 			if cfg.label == "" {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "label cannot be empty", ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: "label cannot be empty", ExitCode: 2}
 			}
 		case arg == "--message" || arg == "-m":
 			if i+1 >= len(args) {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --message", ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: "missing value for --message", ExitCode: 2}
 			}
 			i++
 			cfg.message = strings.TrimSpace(args[i])
@@ -985,18 +1012,18 @@ func parseNewPathArgs(args []string) (newPathConfig, error) {
 			cfg.message = strings.TrimSpace(strings.TrimPrefix(arg, "--message="))
 		case arg == "--ttl":
 			if i+1 >= len(args) {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --ttl", ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: "missing value for --ttl", ExitCode: 2}
 			}
 			i++
 			spec, err := state.ParseHumanDuration(args[i])
 			if err != nil {
-				return cfg, appError{Code: "INVALID_DURATION", Message: err.Error(), ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_duration", Message: err.Error(), ExitCode: 2}
 			}
 			cfg.ttl = spec.String()
 		case strings.HasPrefix(arg, "--ttl="):
 			spec, err := state.ParseHumanDuration(strings.TrimPrefix(arg, "--ttl="))
 			if err != nil {
-				return cfg, appError{Code: "INVALID_DURATION", Message: err.Error(), ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_duration", Message: err.Error(), ExitCode: 2}
 			}
 			cfg.ttl = spec.String()
 		case arg == "--no-sync":
@@ -1004,16 +1031,16 @@ func parseNewPathArgs(args []string) (newPathConfig, error) {
 		case arg == "--sync-dry-run":
 			cfg.syncDryRun = true
 		case strings.HasPrefix(arg, "-"):
-			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
+			return cfg, appError{Code: "input.invalid_argument", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
 		default:
 			if cfg.name != "" {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
 			}
 			cfg.name = arg
 		}
 	}
 	if cfg.name == "" {
-		return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing worktree name", ExitCode: 2}
+		return cfg, appError{Code: "input.invalid_argument", Message: "missing worktree name", ExitCode: 2}
 	}
 	return cfg, nil
 }
@@ -1034,39 +1061,39 @@ func parseGCArgs(args []string) (gcConfig, error) {
 			cfg.json = true
 		case arg == "--idle":
 			if i+1 >= len(args) {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --idle", ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: "missing value for --idle", ExitCode: 2}
 			}
 			i++
 			spec, err := state.ParseHumanDuration(args[i])
 			if err != nil {
-				return cfg, appError{Code: "INVALID_DURATION", Message: err.Error(), ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_duration", Message: err.Error(), ExitCode: 2}
 			}
 			cfg.idle = spec
 			cfg.idleSet = true
 		case strings.HasPrefix(arg, "--idle="):
 			spec, err := state.ParseHumanDuration(strings.TrimPrefix(arg, "--idle="))
 			if err != nil {
-				return cfg, appError{Code: "INVALID_DURATION", Message: err.Error(), ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_duration", Message: err.Error(), ExitCode: 2}
 			}
 			cfg.idle = spec
 			cfg.idleSet = true
 		case arg == "--base":
 			if i+1 >= len(args) {
-				return cfg, appError{Code: "INVALID_ARGUMENTS", Message: "missing value for --base", ExitCode: 2}
+				return cfg, appError{Code: "input.invalid_argument", Message: "missing value for --base", ExitCode: 2}
 			}
 			i++
 			cfg.base = args[i]
 		case strings.HasPrefix(arg, "--base="):
 			cfg.base = strings.TrimPrefix(arg, "--base=")
 		case strings.HasPrefix(arg, "-"):
-			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
+			return cfg, appError{Code: "input.invalid_argument", Message: fmt.Sprintf("unknown option: %s", arg), ExitCode: 2}
 		default:
-			return cfg, appError{Code: "INVALID_ARGUMENTS", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
+			return cfg, appError{Code: "input.invalid_argument", Message: fmt.Sprintf("unexpected extra arguments: %s", strings.Join(args[i:], " ")), ExitCode: 2}
 		}
 	}
 
 	if !cfg.ttlExpired && !cfg.idleSet && !cfg.merged {
-		return cfg, appError{Code: "GC_RULE_REQUIRED", Message: "at least one gc rule is required", ExitCode: 2}
+		return cfg, appError{Code: "input.missing_selector", Message: "at least one gc rule is required", ExitCode: 2}
 	}
 	return cfg, nil
 }
@@ -1078,23 +1105,23 @@ func parseListFilter(expr string) (listFilter, error) {
 	case strings.HasPrefix(expr, "label="):
 		value := strings.TrimPrefix(expr, "label=")
 		if strings.TrimSpace(value) == "" {
-			return listFilter{}, appError{Code: "INVALID_FILTER", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
+			return listFilter{}, appError{Code: "input.invalid_filter", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
 		}
 		return listFilter{kind: "label_eq", value: value}, nil
 	case strings.HasPrefix(expr, "label~"):
 		value := strings.TrimPrefix(expr, "label~")
 		if strings.TrimSpace(value) == "" {
-			return listFilter{}, appError{Code: "INVALID_FILTER", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
+			return listFilter{}, appError{Code: "input.invalid_filter", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
 		}
 		return listFilter{kind: "label_contains", value: value}, nil
 	case strings.HasPrefix(expr, "stale="):
 		spec, err := state.ParseHumanDuration(strings.TrimPrefix(expr, "stale="))
 		if err != nil {
-			return listFilter{}, appError{Code: "INVALID_FILTER", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
+			return listFilter{}, appError{Code: "input.invalid_filter", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
 		}
 		return listFilter{kind: "stale", duration: spec}, nil
 	default:
-		return listFilter{}, appError{Code: "INVALID_FILTER", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
+		return listFilter{}, appError{Code: "input.invalid_filter", Message: fmt.Sprintf("invalid filter: %s", expr), ExitCode: 2}
 	}
 }
 
@@ -1241,7 +1268,7 @@ func selectRemovalCandidateNonInteractive(allItems []worktree.Worktree, candidat
 			return candidates[0], nil
 		}
 		return removalCandidate{}, appError{
-			Code:     "AMBIGUOUS_MATCH",
+			Code:     "worktree.ambiguous_match",
 			Message:  "must specify a target when multiple removable worktrees exist",
 			ExitCode: 2,
 		}
@@ -1249,7 +1276,7 @@ func selectRemovalCandidateNonInteractive(allItems []worktree.Worktree, candidat
 
 	if selected, err := worktree.Match(allItems, target); err == nil && selected.IsCurrent {
 		return removalCandidate{}, appError{
-			Code:     "REMOVE_CURRENT",
+			Code:     "worktree.remove_current",
 			Message:  "cannot remove the active worktree",
 			ExitCode: 1,
 		}
@@ -1366,11 +1393,33 @@ func removeJSONPayload(result git.RemoveResult) map[string]any {
 	}
 }
 
+// protocolVersion is the wire-format version reported in every JSON envelope.
+// See docs/protocol.md for the contract.
+const protocolVersion = "1.0"
+
+// binaryVersion is the build version of the ww-helper binary. Defaults to
+// "dev"; release builds inject the tag via:
+//
+//	go build -ldflags "-X 'ww/internal/app.binaryVersion=v0.4.0'" ./cmd/ww-helper
+var binaryVersion = "dev"
+
+// nanosToMillis converts an internal unix-nanosecond timestamp to the
+// unix-millisecond form documented in protocol §4.1. A zero input (no value)
+// is preserved as zero.
+func nanosToMillis(nanos int64) int64 {
+	if nanos == 0 {
+		return 0
+	}
+	return nanos / 1_000_000
+}
+
 func writeJSONSuccess(out io.Writer, command string, data any) int {
 	payload := map[string]any{
-		"ok":      true,
-		"command": command,
-		"data":    data,
+		"protocol": protocolVersion,
+		"ok":       true,
+		"command":  command,
+		"data":     data,
+		"warnings": []any{},
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -1382,12 +1431,13 @@ func writeJSONSuccess(out io.Writer, command string, data any) int {
 
 func writeJSONError(out io.Writer, command string, err appError) int {
 	payload := map[string]any{
-		"ok":      false,
-		"command": command,
+		"protocol": protocolVersion,
+		"ok":       false,
+		"command":  command,
 		"error": map[string]any{
-			"code":      err.Code,
-			"message":   err.Message,
-			"exit_code": err.ExitCode,
+			"code":    err.Code,
+			"message": err.Message,
+			"context": map[string]any{},
 		},
 	}
 	encoded, marshalErr := json.Marshal(payload)
@@ -1417,23 +1467,23 @@ func classifyError(err error) appError {
 
 	switch {
 	case errors.Is(err, git.ErrNotGitRepository):
-		return appError{Code: "NOT_GIT_REPO", Message: "not a git repository", ExitCode: 3}
+		return appError{Code: "git.repo_missing", Message: "not a git repository", ExitCode: 3}
 	case errors.Is(err, ui.ErrSelectionCanceled):
-		return appError{Code: "CANCELLED", Message: "selection canceled", ExitCode: 130}
+		return appError{Code: "selector.cancelled", Message: "selection canceled", ExitCode: 130}
 	case errors.Is(err, ui.ErrFzfNotInstalled):
-		return appError{Code: "GIT_ERROR", Message: "fzf is not installed", ExitCode: 3}
+		return appError{Code: "selector.fzf_not_installed", Message: "fzf is not installed", ExitCode: 3}
 	}
 
 	message := err.Error()
 	switch {
 	case strings.HasPrefix(message, "ambiguous worktree match"):
-		return appError{Code: "AMBIGUOUS_MATCH", Message: message, ExitCode: 2}
+		return appError{Code: "worktree.ambiguous_match", Message: message, ExitCode: 2}
 	case strings.HasPrefix(message, "no worktree matches"):
-		return appError{Code: "WORKTREE_NOT_FOUND", Message: message, ExitCode: 2}
+		return appError{Code: "worktree.not_found", Message: message, ExitCode: 2}
 	case strings.Contains(message, "uncommitted changes"):
-		return appError{Code: "WORKTREE_DIRTY", Message: message, ExitCode: 1}
+		return appError{Code: "worktree.dirty", Message: message, ExitCode: 1}
 	default:
-		return appError{Code: "GIT_ERROR", Message: message, ExitCode: 1}
+		return appError{Code: "git.command_failed", Message: message, ExitCode: 1}
 	}
 }
 
@@ -1538,7 +1588,7 @@ func shellQuote(value string) string {
 }
 
 func printHelperHelp(out io.Writer) {
-	fmt.Fprintln(out, "Usage: ww-helper [switch-path|list|new-path|init|gc|rm|help|--help]")
+	fmt.Fprintln(out, "Usage: ww-helper [switch-path|list|new-path|init|gc|rm|version|help|--help]")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "switch-path prints the selected git worktree path.")
 	fmt.Fprintln(out, "Interactive switch uses fzf when available, otherwise the built-in selector.")
@@ -1547,5 +1597,6 @@ func printHelperHelp(out io.Writer) {
 	fmt.Fprintln(out, "init prints shell code that activates ww for zsh or bash.")
 	fmt.Fprintln(out, "gc evaluates explicit cleanup rules and prints matched worktrees.")
 	fmt.Fprintln(out, "rm removes a worktree and optionally deletes its merged branch.")
+	fmt.Fprintln(out, "version prints the binary and protocol version. Pass --json for the envelope form.")
 	fmt.Fprintln(out, "help prints this command summary.")
 }

@@ -372,7 +372,7 @@ func TestCLIListMigratesV1StateToV2(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("mkdir state dir: %v", err)
 	}
-	original := []byte("{\n  \"repos\": {\n    \"" + repoKey + "\": {\n      \"" + alpha + "\": 123\n    }\n  }\n}\n")
+	original := []byte("{\n  \"repos\": {\n    \"" + repoKey + "\": {\n      \"" + alpha + "\": 123000000\n    }\n  }\n}\n")
 	v1Path := filepath.Join(stateDir, "state.json")
 	if err := os.WriteFile(v1Path, original, 0o644); err != nil {
 		t.Fatalf("write v1 state: %v", err)

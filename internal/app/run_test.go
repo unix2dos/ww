@@ -364,8 +364,8 @@ func TestRunListOutputsJSONWhenRequested(t *testing.T) {
 	deps := fakeDeps{
 		repoKey: "/repo/.git",
 		worktrees: []worktree.Worktree{
-			{Path: "/repo", BranchLabel: "main", IsCurrent: true, CreatedAt: 10},
-			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", IsDirty: true, CreatedAt: 20},
+			{Path: "/repo", BranchLabel: "main", IsCurrent: true, CreatedAt: 10_000_000},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", IsDirty: true, CreatedAt: 20_000_000},
 		},
 	}
 
@@ -434,7 +434,7 @@ func TestRunListOutputsJSONErrorWhenRequested(t *testing.T) {
 	if envelope.Error == nil {
 		t.Fatalf("expected error details, got %#v", envelope)
 	}
-	if envelope.Error.Code != "NOT_GIT_REPO" || envelope.Error.ExitCode != 3 {
+	if envelope.Error.Code != "git.repo_missing" {
 		t.Fatalf("unexpected error payload: %#v", envelope.Error)
 	}
 	if !strings.Contains(envelope.Error.Message, "not a git repository") {
@@ -705,7 +705,7 @@ func TestRunNewPathRejectsInvalidTTL(t *testing.T) {
 	if envelope.OK {
 		t.Fatalf("expected error envelope, got %#v", envelope)
 	}
-	if envelope.Error == nil || envelope.Error.Code != "INVALID_DURATION" {
+	if envelope.Error == nil || envelope.Error.Code != "input.invalid_duration" {
 		t.Fatalf("unexpected error payload: %#v", envelope.Error)
 	}
 }
@@ -727,7 +727,7 @@ func TestRunNewPathRejectsEmptyLabel(t *testing.T) {
 	if envelope.OK {
 		t.Fatalf("expected error envelope, got %#v", envelope)
 	}
-	if envelope.Error == nil || envelope.Error.Code != "INVALID_ARGUMENTS" {
+	if envelope.Error == nil || envelope.Error.Code != "input.invalid_argument" {
 		t.Fatalf("unexpected error payload: %#v", envelope.Error)
 	}
 	if !strings.Contains(envelope.Error.Message, "label") {
@@ -755,7 +755,7 @@ func TestRunNewPathOutputsJSONErrorWhenMissingName(t *testing.T) {
 	if envelope.Command != "new-path" {
 		t.Fatalf("expected command new-path, got %#v", envelope)
 	}
-	if envelope.Error == nil || envelope.Error.ExitCode != 2 {
+	if envelope.Error == nil || envelope.Error.Code != "input.invalid_argument" {
 		t.Fatalf("unexpected error payload: %#v", envelope.Error)
 	}
 	if !strings.Contains(envelope.Error.Message, "missing worktree name") {
@@ -769,13 +769,13 @@ func TestRunListJSONIncludesMetadataFields(t *testing.T) {
 	deps := fakeDeps{
 		repoKey: "/repo/.git",
 		worktrees: []worktree.Worktree{
-			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", CreatedAt: 20},
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha", CreatedAt: 20_000_000},
 		},
 		metadata: map[string]map[string]state.WorktreeMetadata{
 			"/repo/.git": {
 				"/repo/.worktrees/alpha": {
-					LastUsedAt: 30,
-					CreatedAt:  20,
+					LastUsedAt: 30_000_000,
+					CreatedAt:  20_000_000,
 					Label:      "agent:claude",
 					TTL:        "24h",
 				},
@@ -981,7 +981,7 @@ func TestRunListRejectsInvalidFilter(t *testing.T) {
 	if envelope.OK {
 		t.Fatalf("expected error envelope, got %#v", envelope)
 	}
-	if envelope.Error == nil || envelope.Error.Code != "INVALID_FILTER" {
+	if envelope.Error == nil || envelope.Error.Code != "input.invalid_filter" {
 		t.Fatalf("unexpected error payload: %#v", envelope.Error)
 	}
 }
@@ -1006,7 +1006,7 @@ func TestRunGCRequiresAtLeastOneRule(t *testing.T) {
 	if envelope.Command != "gc" {
 		t.Fatalf("expected command gc, got %#v", envelope)
 	}
-	if envelope.Error == nil || envelope.Error.Code != "GC_RULE_REQUIRED" {
+	if envelope.Error == nil || envelope.Error.Code != "input.missing_selector" {
 		t.Fatalf("unexpected error payload: %#v", envelope.Error)
 	}
 }
@@ -2130,17 +2130,78 @@ func TestRunRmResultBranchDeleted(t *testing.T) {
 	}
 }
 
+func TestRunVersionHumanOutput(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"version"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "ww-helper") || !strings.Contains(stdout.String(), "protocol "+protocolVersion) {
+		t.Fatalf("expected human version line, got %q", stdout.String())
+	}
+}
+
+func TestRunVersionJSONEnvelope(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"version", "--json"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr, got %q", stderr.String())
+	}
+
+	envelope := decodeEnvelope(t, stdout.String())
+	if !envelope.OK || envelope.Command != "version" || envelope.Protocol != protocolVersion {
+		t.Fatalf("unexpected envelope: %#v", envelope)
+	}
+
+	var data struct {
+		Binary string `json:"binary"`
+	}
+	decodeEnvelopeData(t, envelope, &data)
+	if data.Binary != binaryVersion {
+		t.Fatalf("expected binary=%q, got %q", binaryVersion, data.Binary)
+	}
+}
+
+func TestRunVersionRejectsUnknownFlag(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := Run(context.Background(), []string{"version", "--json", "--bogus"}, bytes.NewReader(nil), stdout, stderr, fakeDeps{})
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	envelope := decodeEnvelope(t, stdout.String())
+	if envelope.OK || envelope.Error == nil || envelope.Error.Code != "input.invalid_argument" {
+		t.Fatalf("expected input.invalid_argument, got %#v", envelope)
+	}
+}
+
 type envelope struct {
-	OK      bool            `json:"ok"`
-	Command string          `json:"command"`
-	Data    json.RawMessage `json:"data"`
-	Error   *envelopeError  `json:"error"`
+	Protocol string          `json:"protocol"`
+	OK       bool            `json:"ok"`
+	Command  string          `json:"command"`
+	Data     json.RawMessage `json:"data"`
+	Warnings []any           `json:"warnings"`
+	Error    *envelopeError  `json:"error"`
 }
 
 type envelopeError struct {
-	Code     string `json:"code"`
-	Message  string `json:"message"`
-	ExitCode int    `json:"exit_code"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Context map[string]any `json:"context"`
 }
 
 type fakeDeps struct {
