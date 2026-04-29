@@ -201,9 +201,7 @@ func runVersion(args []string, out io.Writer, errOut io.Writer) int {
 	}
 
 	if jsonMode {
-		return writeJSONSuccess(out, "version", map[string]any{
-			"binary": binaryVersion,
-		})
+		return writeJSONSuccess(out, "version", VersionData())
 	}
 
 	fmt.Fprintf(out, "ww-helper %s (protocol %s)\n", binaryVersion, protocolVersion)
@@ -359,13 +357,26 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 		return writeCommandError("list", out, errOut, cfg.json, err)
 	}
 
+	if cfg.json {
+		views, _, err := ListData(ctx, deps, ListOptions{Filters: cfg.filters})
+		if err != nil {
+			return writeCommandError("list", out, errOut, cfg.json, err)
+		}
+		// `views` may be nil when the empty case fires below; `[]` envelope is
+		// preserved exactly, including its protocol shape.
+		if views == nil {
+			views = []WorktreeView{}
+		}
+		return writeJSONSuccess(out, "list", views)
+	}
+
+	// Human path: keep the existing rendering, including verbose detail and
+	// state-load warnings.
 	_, items, metadata, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
 		return writeCommandError("list", out, errOut, cfg.json, err)
 	}
-	if !cfg.json {
-		warnStateIssue(errOut, warn)
-	}
+	warnStateIssue(errOut, warn)
 
 	annotateExtendedStatusBestEffort(ctx, deps, items)
 
@@ -374,38 +385,11 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 		return writeCommandError("list", out, errOut, cfg.json, err)
 	}
 	if len(entries) == 0 {
-		if cfg.json {
-			return writeJSONSuccess(out, "list", []any{})
-		}
 		return writeCommandError("list", out, errOut, cfg.json, appError{
 			Code:     "worktree.not_found",
 			Message:  "no worktrees available",
 			ExitCode: 1,
 		})
-	}
-
-	if cfg.json {
-		payload := make([]map[string]any, 0, len(entries))
-		for _, entry := range entries {
-			item := entry.item
-			payload = append(payload, map[string]any{
-				"path":         item.Path,
-				"branch":       item.BranchLabel,
-				"dirty":        item.IsDirty,
-				"active":       item.IsCurrent,
-				"created_at":   nanosToMillis(item.CreatedAt),
-				"last_used_at": nanosToMillis(entry.meta.LastUsedAt),
-				"label":        entry.meta.Label,
-				"ttl":          entry.meta.TTL,
-				"merged":       item.IsMerged,
-				"ahead":        item.Ahead,
-				"behind":       item.Behind,
-				"staged":       item.Staged,
-				"unstaged":     item.Unstaged,
-				"untracked":    item.Untracked,
-			})
-		}
-		return writeJSONSuccess(out, "list", payload)
 	}
 
 	tableEntries := make([]ui.ListTableEntry, 0, len(entries))
@@ -464,6 +448,19 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 		return writeCommandError("new-path", out, errOut, cfg.json, err)
 	}
 
+	if cfg.json {
+		result, err := NewPathData(ctx, deps, NewPathOptions{
+			Name:    cfg.name,
+			Label:   cfg.label,
+			TTL:     cfg.ttl,
+			Message: cfg.message,
+		})
+		if err != nil {
+			return writeCommandError("new-path", out, errOut, cfg.json, err)
+		}
+		return writeJSONSuccess(out, "new-path", result)
+	}
+
 	repoKey, err := deps.CurrentRepoKey(ctx)
 	if err != nil {
 		return writeCommandError("new-path", out, errOut, cfg.json, err)
@@ -480,22 +477,6 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 		TTL:       cfg.ttl,
 	}
 	createdAt := time.Unix(0, meta.CreatedAt).UTC()
-
-	if cfg.json {
-		if err := recordWorktreeStateBestEffort(ctx, deps, repoKey, path, meta); err != nil {
-			return writeCommandError("new-path", out, errOut, cfg.json, err)
-		}
-		if err := createTaskNoteIfLabeled(ctx, deps, path, cfg.name, cfg.label, cfg.message, createdAt); err != nil {
-			return writeCommandError("new-path", out, errOut, cfg.json, err)
-		}
-		if err := touchWorktreeStateBestEffort(ctx, deps, repoKey, path); err != nil {
-			return writeCommandError("new-path", out, errOut, cfg.json, err)
-		}
-		return writeJSONSuccess(out, "new-path", map[string]any{
-			"worktree_path": path,
-			"branch":        cfg.name,
-		})
-	}
 
 	fmt.Fprintln(out, path)
 	warnStateIssue(errOut, recordWorktreeStateBestEffort(ctx, deps, repoKey, path, meta))
@@ -655,109 +636,30 @@ func runGC(ctx context.Context, args []string, out io.Writer, errOut io.Writer, 
 		return writeCommandError("gc", out, errOut, cfg.json, err)
 	}
 
-	_, items, metadata, warn, err := orderedWorktrees(ctx, deps)
-	if err != nil {
-		return writeCommandError("gc", out, errOut, cfg.json, err)
-	}
 	if !cfg.json {
+		// Surface state-load warnings to the human path; the data layer
+		// silently handles them otherwise.
+		_, _, _, warn, _ := orderedWorktrees(ctx, deps)
 		warnStateIssue(errOut, warn)
 	}
 
-	now := time.Now()
-	entries := decorateListEntries(items, metadata)
-	baseBranch := cfg.base
-	candidates := make([]gcCandidate, 0, len(entries))
-	for _, entry := range entries {
-		candidate := gcCandidate{entry: entry}
-		if cfg.ttlExpired && ttlExpired(entry.meta, now) {
-			candidate.matchedRules = append(candidate.matchedRules, "ttl_expired")
-		}
-		if cfg.idleSet && idleExpired(entry.meta, cfg.idle, now) {
-			candidate.matchedRules = append(candidate.matchedRules, "idle")
-		}
-		if cfg.merged && entry.item.BranchRef != "" {
-			if baseBranch == "" {
-				baseBranch, err = deps.DefaultBranch(ctx)
-				if err != nil {
-					return writeCommandError("gc", out, errOut, cfg.json, err)
-				}
-			}
-			preview, previewErr := deps.PreviewRemoval(ctx, entry.item, baseBranch)
-			if previewErr != nil {
-				return writeCommandError("gc", out, errOut, cfg.json, previewErr)
-			}
-			candidate.preview = preview
-			candidate.hasPreview = true
-			if preview.BranchMerged {
-				candidate.matchedRules = append(candidate.matchedRules, "merged")
-			}
-		}
-		if len(candidate.matchedRules) > 0 {
-			candidates = append(candidates, candidate)
-		}
+	result, err := GCData(ctx, deps, GCOptions{
+		TTLExpired: cfg.ttlExpired,
+		IdleSet:    cfg.idleSet,
+		Idle:       cfg.idle,
+		Merged:     cfg.merged,
+		DryRun:     cfg.dryRun,
+		Force:      cfg.force,
+		Base:       cfg.base,
+	})
+	if err != nil {
+		return writeCommandError("gc", out, errOut, cfg.json, err)
 	}
 
-	if cfg.dryRun {
-		return writeJSONSuccess(out, "gc", gcJSONPayload(candidates, nil))
+	if cfg.json || cfg.dryRun {
+		return writeJSONSuccess(out, "gc", result)
 	}
-
-	results := make([]gcResultItem, 0, len(candidates))
-	for _, candidate := range candidates {
-		item := candidate.entry.item
-		if item.IsCurrent {
-			results = append(results, gcResultItem{
-				Path:         item.Path,
-				Branch:       item.BranchLabel,
-				MatchedRules: candidate.matchedRules,
-				Action:       "skipped",
-				Reason:       "active",
-			})
-			continue
-		}
-
-		preview := candidate.preview
-		if !candidate.hasPreview && item.BranchRef != "" {
-			if baseBranch == "" {
-				baseBranch, err = deps.DefaultBranch(ctx)
-				if err != nil {
-					return writeCommandError("gc", out, errOut, cfg.json, err)
-				}
-			}
-			preview, err = deps.PreviewRemoval(ctx, item, baseBranch)
-			if err != nil {
-				return writeCommandError("gc", out, errOut, cfg.json, err)
-			}
-		}
-		if preview.Dirty && !cfg.force {
-			results = append(results, gcResultItem{
-				Path:         item.Path,
-				Branch:       item.BranchLabel,
-				MatchedRules: candidate.matchedRules,
-				Action:       "skipped",
-				Reason:       "dirty",
-			})
-			continue
-		}
-
-		removeResult, removeErr := deps.RemoveWorktree(ctx, item, git.RemoveOptions{
-			BaseBranch: baseBranch,
-			Force:      cfg.force,
-		})
-		if removeErr != nil {
-			return writeCommandError("gc", out, errOut, cfg.json, removeErr)
-		}
-		results = append(results, gcResultItem{
-			Path:         removeResult.WorktreePath,
-			Branch:       removeResult.Branch,
-			MatchedRules: candidate.matchedRules,
-			Action:       "removed",
-		})
-	}
-
-	if cfg.json {
-		return writeJSONSuccess(out, "gc", gcJSONPayload(candidates, results))
-	}
-	writeGCHuman(out, results)
+	writeGCHuman(out, result.Items)
 	return 0
 }
 
@@ -778,24 +680,23 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
 
+	if cfg.json {
+		result, err := RemoveData(ctx, deps, RemoveOptions{Target: cfg.target, Force: cfg.force})
+		if err != nil {
+			return writeCommandError("rm", out, errOut, true, err)
+		}
+		return writeJSONSuccess(out, "rm", result)
+	}
+
+	// Human path keeps the interactive prompt flow.
 	_, items, _, warn, err := orderedWorktrees(ctx, deps)
 	if err != nil {
 		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
-	if !cfg.json {
-		warnStateIssue(errOut, warn)
-	}
+	warnStateIssue(errOut, warn)
 
-	// Check if target is the current worktree before filtering
 	if cfg.target != "" {
 		if selected, matchErr := worktree.Match(items, cfg.target); matchErr == nil && selected.IsCurrent {
-			if cfg.json {
-				return writeCommandError("rm", out, errOut, true, appError{
-					Code:     "worktree.remove_current",
-					Message:  "Cannot remove the current worktree. Switch first: ww go <name>",
-					ExitCode: 1,
-				})
-			}
 			fmt.Fprintln(errOut, "Cannot remove the current worktree. Switch first: ww go <name>")
 			return 1
 		}
@@ -824,59 +725,44 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		previewed = append(previewed, removalCandidate{item: item, preview: preview})
 	}
 
-	// Select target
-	selected := removalCandidate{}
-	if cfg.json {
-		selected, err = selectRemovalCandidateNonInteractive(items, previewed, cfg.target)
+	reader := bufio.NewReader(in)
+	var selected removalCandidate
+
+	if cfg.target != "" {
+		selected, err = matchRemovalCandidate(previewed, cfg.target)
 		if err != nil {
-			return writeCommandError("rm", out, errOut, true, err)
+			fmt.Fprintln(errOut, err)
+			return 2
 		}
-		if selected.preview.Dirty && !cfg.force {
-			return writeCommandError("rm", out, errOut, true, appError{
-				Code:     "worktree.dirty",
-				Message:  "worktree has uncommitted changes; rerun with --force",
-				ExitCode: 1,
-			})
-		}
+	} else if len(previewed) == 1 {
+		selected = previewed[0]
 	} else {
-		reader := bufio.NewReader(in)
-
-		if cfg.target != "" {
-			selected, err = matchRemovalCandidate(previewed, cfg.target)
-			if err != nil {
-				fmt.Fprintln(errOut, err)
-				return 2
-			}
-		} else if len(previewed) == 1 {
-			selected = previewed[0]
-		} else {
-			renderRemovalCandidates(errOut, previewed)
-			index, err := readChoice(reader, errOut, "\n> ", len(previewed), 0)
-			if err != nil {
-				return writeSelectionError(errOut, err)
-			}
-			selected = previewed[index-1]
-		}
-
-		label := removalCandidateLabel(selected.item)
-		if selected.preview.Dirty && !cfg.force {
-			fmt.Fprintf(errOut, "%s has uncommitted changes. Use --force to remove.\n", label)
-			return 1
-		}
-
-		var prompt string
-		if selected.preview.Dirty && cfg.force {
-			prompt = fmt.Sprintf("Remove %s? Uncommitted changes will be lost. [y/N] ", label)
-		} else {
-			prompt = fmt.Sprintf("Remove %s? [y/N] ", label)
-		}
-		confirmed, err := confirmPrompt(reader, errOut, prompt)
+		renderRemovalCandidates(errOut, previewed)
+		index, err := readChoice(reader, errOut, "\n> ", len(previewed), 0)
 		if err != nil {
 			return writeSelectionError(errOut, err)
 		}
-		if !confirmed {
-			return 130
-		}
+		selected = previewed[index-1]
+	}
+
+	label := removalCandidateLabel(selected.item)
+	if selected.preview.Dirty && !cfg.force {
+		fmt.Fprintf(errOut, "%s has uncommitted changes. Use --force to remove.\n", label)
+		return 1
+	}
+
+	var prompt string
+	if selected.preview.Dirty && cfg.force {
+		prompt = fmt.Sprintf("Remove %s? Uncommitted changes will be lost. [y/N] ", label)
+	} else {
+		prompt = fmt.Sprintf("Remove %s? [y/N] ", label)
+	}
+	confirmed, err := confirmPrompt(reader, errOut, prompt)
+	if err != nil {
+		return writeSelectionError(errOut, err)
+	}
+	if !confirmed {
+		return 130
 	}
 
 	result, err := deps.RemoveWorktree(ctx, selected.item, git.RemoveOptions{
@@ -887,9 +773,6 @@ func runRemove(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 		return writeCommandError("rm", out, errOut, cfg.json, err)
 	}
 
-	if cfg.json {
-		return writeJSONSuccess(out, "rm", removeJSONPayload(result))
-	}
 	writeRemoveHuman(out, result)
 	return 0
 }
@@ -1202,56 +1085,7 @@ func matchesAllListFilters(entry listEntry, filters []listFilter, now time.Time)
 	return true
 }
 
-type gcResultItem struct {
-	Path         string   `json:"path"`
-	Branch       string   `json:"branch"`
-	MatchedRules []string `json:"matched_rules"`
-	Action       string   `json:"action"`
-	Reason       string   `json:"reason,omitempty"`
-}
-
-func gcJSONPayload(candidates []gcCandidate, results []gcResultItem) map[string]any {
-	if results == nil {
-		items := make([]gcResultItem, 0, len(candidates))
-		for _, candidate := range candidates {
-			items = append(items, gcResultItem{
-				Path:         candidate.entry.item.Path,
-				Branch:       candidate.entry.item.BranchLabel,
-				MatchedRules: candidate.matchedRules,
-				Action:       "dry_run",
-			})
-		}
-		return map[string]any{
-			"summary": map[string]any{
-				"matched": len(candidates),
-				"removed": 0,
-				"skipped": 0,
-			},
-			"items": items,
-		}
-	}
-
-	removed := 0
-	skipped := 0
-	for _, item := range results {
-		switch item.Action {
-		case "removed":
-			removed++
-		case "skipped":
-			skipped++
-		}
-	}
-	return map[string]any{
-		"summary": map[string]any{
-			"matched": len(candidates),
-			"removed": removed,
-			"skipped": skipped,
-		},
-		"items": results,
-	}
-}
-
-func writeGCHuman(out io.Writer, results []gcResultItem) {
+func writeGCHuman(out io.Writer, results []GCItem) {
 	for _, item := range results {
 		switch item.Action {
 		case "removed":
@@ -1379,17 +1213,6 @@ func writeRemoveHuman(out io.Writer, result git.RemoveResult) {
 		fmt.Fprintf(out, "Removed %s (branch kept, %s)\n", label, result.KeptBranchReason)
 	default:
 		fmt.Fprintf(out, "Removed %s\n", label)
-	}
-}
-
-func removeJSONPayload(result git.RemoveResult) map[string]any {
-	return map[string]any{
-		"worktree_path":      result.WorktreePath,
-		"branch":             result.Branch,
-		"base_branch":        result.BaseBranch,
-		"removed_worktree":   result.RemovedWorktree,
-		"deleted_branch":     result.DeletedBranch,
-		"kept_branch_reason": result.KeptBranchReason,
 	}
 }
 
