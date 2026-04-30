@@ -280,11 +280,11 @@ func TestCLIRemovesMergedWorktreeAndBranch(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "✅ Safe to delete") || !strings.Contains(stderr.String(), "branch alpha (already merged into main)") {
-		t.Fatalf("expected safe summary card on stderr, got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "Remove alpha?") {
+		t.Fatalf("expected confirmation prompt on stderr, got %q", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "deleted branch alpha") {
-		t.Fatalf("expected branch deletion output, got %q", stdout.String())
+	if !strings.Contains(stdout.String(), "Removed alpha (branch deleted)") {
+		t.Fatalf("expected branch-deleted summary on stdout, got %q", stdout.String())
 	}
 	if _, err := os.Stat(alpha); !os.IsNotExist(err) {
 		t.Fatalf("expected removed worktree path to disappear, got err=%v", err)
@@ -316,7 +316,7 @@ func TestCLIRemovesWorktreeButKeepsUnmergedBranch(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("unexpected error: %v\nstderr: %s", err, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "kept branch alpha (not merged)") {
+	if !strings.Contains(stdout.String(), "Removed alpha (branch kept, not merged)") {
 		t.Fatalf("expected keep-branch output, got %q", stdout.String())
 	}
 	if _, err := os.Stat(alpha); !os.IsNotExist(err) {
@@ -347,10 +347,10 @@ func TestCLIRmDirtyWorktreeStopsBeforeConfirmationWithoutForce(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected dirty removal to fail without --force")
 	}
-	if !strings.Contains(stderr.String(), "🛑 Not safe to delete") || !strings.Contains(stderr.String(), "rerun with --force") {
-		t.Fatalf("expected stop card on stderr, got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "uncommitted changes") || !strings.Contains(stderr.String(), "--force") {
+		t.Fatalf("expected dirty-stop message mentioning uncommitted changes and --force, got %q", stderr.String())
 	}
-	if strings.Contains(stderr.String(), "Delete this worktree? [y/N]:") {
+	if strings.Contains(stderr.String(), "Remove alpha?") {
 		t.Fatalf("expected no confirmation prompt for dirty worktree, got %q", stderr.String())
 	}
 	if stdout.Len() != 0 {
