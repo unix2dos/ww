@@ -148,7 +148,7 @@ func removeHandler(deps app.Deps) func(context.Context, *mcpsdk.CallToolRequest,
 func gcHandler(deps app.Deps) func(context.Context, *mcpsdk.CallToolRequest, gcInput) (*mcpsdk.CallToolResult, app.GCResult, error) {
 	return func(ctx context.Context, _ *mcpsdk.CallToolRequest, in gcInput) (*mcpsdk.CallToolResult, app.GCResult, error) {
 		if !in.TTLExpired && !in.Merged && in.Idle == "" {
-			return errorResult(invalidArgument("at least one of ttl_expired, idle, or merged must be set")), app.GCResult{}, nil
+			return errorResult(missingSelector("at least one of ttl_expired, idle, or merged must be set")), app.GCResult{}, nil
 		}
 
 		opts := app.GCOptions{
@@ -209,4 +209,8 @@ func invalidArgument(msg string) error {
 
 func invalidDuration(msg string) error {
 	return &mcpInputError{code: "input.invalid_duration", msg: msg}
+}
+
+func missingSelector(msg string) error {
+	return &mcpInputError{code: "input.missing_selector", msg: msg}
 }

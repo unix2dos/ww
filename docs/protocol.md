@@ -451,7 +451,16 @@ Runs an MCP server over stdio so any MCP-aware agent can call ww-helper natively
 
 Tool schemas are generated from the same Go structs the CLI uses to marshal `--json` output, so the field names and types match this document one-for-one.
 
-**Errors:** when a tool fails, the MCP `CallToolResult.isError` is `true` and `content[0].text` is a single JSON line `{"code": "...", "message": "...", "context": {...}}` mirroring the CLI envelope's `error` object. Agents should branch on `code` exactly as they would for a subprocess invocation.
+**Errors:** when a tool fails after handler entry, `CallToolResult.isError` is `true` and `content[0].text` is a single JSON line `{"code": "...", "message": "...", "context": {...}}` mirroring the CLI envelope's `error` object. Agents should branch on `code` exactly as they would for a subprocess invocation.
+
+**Schema-level vs handler-level errors.** Two distinct error shapes can appear in `content[0].text`:
+
+| Class | When | Shape | How to detect |
+|-------|------|-------|---------------|
+| **Handler-level** | Inside the tool handler (e.g. `worktree.dirty`, `git.repo_missing`, `input.missing_selector`) | Envelope JSON `{"code":...,"message":...,"context":{}}` | Starts with `{` |
+| **Schema-level** | Before the handler runs — input fails JSON-schema validation (e.g. missing required field) | SDK string, e.g. `validating "arguments": validating root: required: missing properties: ["name"]` | Does not start with `{` |
+
+Schema-level errors come from the SDK before any ww code runs, so they don't carry an envelope code. Programmatic clients should JSON-parse `content[0].text` defensively and fall back to a generic "input rejected" classification when parse fails. Required-field constraints stay in the published tool schemas — losing them to unify error shapes would be a worse trade than the parse-defensiveness this requires.
 
 **Warnings:** for `ww_new`, sync results (`sync.copied`, `sync.skipped`, etc. — see §3.4) are emitted as additional `TextContent` blocks alongside the structured result. Agents that need them parse each text block as JSON `{"warning": {...}}`.
 
