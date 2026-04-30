@@ -4,16 +4,17 @@ Usage:
   ww [switch] [<index>|<name>]
   ww list
   ww new <name>
-  ww rm [--force] [--base <branch>] [<name>]
-  ww rm --cleanup
+  ww rm [--force] [<name>]
+  ww version
   ww help
 
 Commands:
-  switch  Select a worktree and change into it. Default when omitted.
-  list    Print worktrees without changing directory.
-  new     Create a worktree under ./.worktrees/<name> and enter it.
-  rm      Remove one worktree, or run cleanup review mode with --cleanup.
-  help    Show this help.
+  switch   Select a worktree and change into it. Default when omitted.
+  list     Print worktrees without changing directory.
+  new      Create a worktree under ./.worktrees/<name> and enter it.
+  rm       Remove one worktree.
+  version  Print the binary and protocol version.
+  help     Show this help.
 
 Notes:
   Uses fzf automatically when available.
@@ -25,7 +26,7 @@ Examples:
   ww switch feat-a
   ww new feat-demo
   ww rm feat-demo
-  ww rm --cleanup
+  ww --version
 EOF
 }
 
@@ -102,6 +103,11 @@ ww() {
     help|-h|--help)
       ww_print_help
       return 0
+      ;;
+    version|-v|--version)
+      shift
+      "$ww_helper_bin" version "$@"
+      return $?
       ;;
     *)
       if ww_has_json_flag "$@"; then
