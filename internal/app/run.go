@@ -449,16 +449,18 @@ func runNewPath(ctx context.Context, args []string, out io.Writer, errOut io.Wri
 	}
 
 	if cfg.json {
-		result, err := NewPathData(ctx, deps, NewPathOptions{
-			Name:    cfg.name,
-			Label:   cfg.label,
-			TTL:     cfg.ttl,
-			Message: cfg.message,
+		result, warnings, err := NewPathData(ctx, deps, NewPathOptions{
+			Name:       cfg.name,
+			Label:      cfg.label,
+			TTL:        cfg.ttl,
+			Message:    cfg.message,
+			Sync:       !cfg.noSync,
+			SyncDryRun: cfg.syncDryRun,
 		})
 		if err != nil {
 			return writeCommandError("new-path", out, errOut, cfg.json, err)
 		}
-		return writeJSONSuccess(out, "new-path", result)
+		return writeJSONSuccess(out, "new-path", result, warnings...)
 	}
 
 	repoKey, err := deps.CurrentRepoKey(ctx)
@@ -1236,13 +1238,17 @@ func nanosToMillis(nanos int64) int64 {
 	return nanos / 1_000_000
 }
 
-func writeJSONSuccess(out io.Writer, command string, data any) int {
+func writeJSONSuccess(out io.Writer, command string, data any, warnings ...Warning) int {
+	ws := warnings
+	if ws == nil {
+		ws = []Warning{}
+	}
 	payload := map[string]any{
 		"protocol": protocolVersion,
 		"ok":       true,
 		"command":  command,
 		"data":     data,
-		"warnings": []any{},
+		"warnings": ws,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

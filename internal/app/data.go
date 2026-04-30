@@ -16,8 +16,18 @@ import (
 
 	"ww/internal/git"
 	"ww/internal/state"
+	"ww/internal/syncignored"
 	"ww/internal/worktree"
 )
+
+// Warning is one entry in an envelope's `warnings` array. Codes follow the
+// `domain.subcode` convention (sync.copied, sync.skipped, sync.failed, …)
+// and are stable within a v1.x major; messages and context keys may evolve.
+type Warning struct {
+	Code    string         `json:"code"`
+	Message string         `json:"message,omitempty"`
+	Context map[string]any `json:"context,omitempty"`
+}
 
 // WorktreeView is the protocol-aligned view of one worktree. The field names
 // and types match the v1.0 wire contract for `list --json`; in-process
@@ -380,6 +390,14 @@ type NewPathOptions struct {
 	Label   string
 	TTL     string
 	Message string
+
+	// Sync controls whether git-ignored files (e.g. .env, local config) are
+	// copied from the main worktree into the freshly created one. The CLI
+	// JSON path and the MCP server set this to true by default; pass false
+	// for opt-out (`--no-sync`). Sync is best-effort and failures are
+	// surfaced as warnings rather than errors.
+	Sync       bool
+	SyncDryRun bool
 }
 
 // NewPathResult is the v1.0 wire shape of `new-path --json`.
@@ -388,21 +406,22 @@ type NewPathResult struct {
 	Branch       string `json:"branch"`
 }
 
-// NewPathData creates a worktree, records metadata, and writes a task note if
-// labeled. It does NOT run the ignored-file sync; that is a CLI-only
-// convenience (see `runSyncIgnored` doc) and a separate decision for MCP.
+// NewPathData creates a worktree, records metadata, writes a task note if
+// labeled, and (if opts.Sync is true) copies ignored files from the main
+// worktree. Sync results are returned as warnings; sync errors do not fail
+// the operation.
 //
 // Name validation (non-empty) is the caller's responsibility — the CLI's
 // argument parser handles it before reaching this function.
-func NewPathData(ctx context.Context, deps Deps, opts NewPathOptions) (NewPathResult, error) {
+func NewPathData(ctx context.Context, deps Deps, opts NewPathOptions) (NewPathResult, []Warning, error) {
 	repoKey, err := deps.CurrentRepoKey(ctx)
 	if err != nil {
-		return NewPathResult{}, err
+		return NewPathResult{}, nil, err
 	}
 
 	path, err := deps.CreateWorktree(ctx, opts.Name)
 	if err != nil {
-		return NewPathResult{}, err
+		return NewPathResult{}, nil, err
 	}
 
 	meta := state.WorktreeMetadata{
@@ -413,16 +432,82 @@ func NewPathData(ctx context.Context, deps Deps, opts NewPathOptions) (NewPathRe
 	createdAt := time.Unix(0, meta.CreatedAt).UTC()
 
 	if err := recordWorktreeStateBestEffort(ctx, deps, repoKey, path, meta); err != nil {
-		return NewPathResult{}, err
+		return NewPathResult{}, nil, err
 	}
 	if err := createTaskNoteIfLabeled(ctx, deps, path, opts.Name, opts.Label, opts.Message, createdAt); err != nil {
-		return NewPathResult{}, err
+		return NewPathResult{}, nil, err
 	}
 	if err := touchWorktreeStateBestEffort(ctx, deps, repoKey, path); err != nil {
-		return NewPathResult{}, err
+		return NewPathResult{}, nil, err
 	}
 
-	return NewPathResult{WorktreePath: path, Branch: opts.Name}, nil
+	var warnings []Warning
+	if opts.Sync {
+		warnings = syncIgnoredAsWarnings(ctx, repoKey, path, opts.SyncDryRun)
+	}
+
+	return NewPathResult{WorktreePath: path, Branch: opts.Name}, warnings, nil
+}
+
+// syncIgnoredAsWarnings runs the ignored-file sync and translates its result
+// into protocol-shaped Warning entries. It mirrors runSyncIgnored's behavior
+// but routes output through warnings instead of stderr text.
+func syncIgnoredAsWarnings(ctx context.Context, repoKey, newPath string, dryRun bool) []Warning {
+	mainRoot := mainWorktreeRootFromRepoKey(repoKey)
+	if mainRoot == "" || mainRoot == newPath {
+		return nil
+	}
+
+	var warnings []Warning
+	userCfg, cfgErr := loadSyncConfigFn()
+	if cfgErr != nil {
+		warnings = append(warnings, Warning{
+			Code:    "sync.config_error",
+			Message: cfgErr.Error(),
+		})
+		// Fall through with defaults, matching runSyncIgnored.
+	}
+
+	if !userCfg.Sync.SyncEnabled() {
+		return warnings
+	}
+
+	syncOpts := syncignored.Options{
+		Enabled:   true,
+		Blacklist: userCfg.Sync.EffectiveBlacklist(syncignored.DefaultBlacklist),
+		DryRun:    dryRun,
+	}
+	if v := userCfg.Sync.EffectiveMaxFileSize(); v > 0 {
+		syncOpts.MaxFileSize = v
+	}
+
+	res, err := syncIgnoredFn(ctx, mainRoot, newPath, syncOpts)
+	if err != nil {
+		warnings = append(warnings, Warning{
+			Code:    "sync.failed",
+			Message: err.Error(),
+		})
+		return warnings
+	}
+
+	for _, copied := range res.Copied {
+		ctxMap := map[string]any{"file": copied}
+		if res.DryRun {
+			ctxMap["dry_run"] = true
+		}
+		warnings = append(warnings, Warning{Code: "sync.copied", Context: ctxMap})
+	}
+	for _, sk := range res.Skipped {
+		ctxMap := map[string]any{
+			"file":   sk.Path,
+			"reason": string(sk.Reason),
+		}
+		if sk.Size > 0 {
+			ctxMap["size"] = sk.Size
+		}
+		warnings = append(warnings, Warning{Code: "sync.skipped", Context: ctxMap})
+	}
+	return warnings
 }
 
 // ListData returns worktrees in the current repository, optionally filtered.

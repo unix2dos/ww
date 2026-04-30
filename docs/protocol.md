@@ -81,13 +81,22 @@ The process exit code carries the same severity information as the error (see §
 `warnings` is an **optional array** on the success envelope. It carries non-fatal signals that a machine consumer needs but a human reader can ignore. Examples: a partial sync result, a deprecated flag was used, a state file was missing and recreated.
 
 ```json
-{"code": "syncignored.skipped", "message": "skipped .env.local: not readable", "context": {"file": ".env.local"}}
+{"code": "sync.copied", "context": {"file": ".env"}}
 ```
 
 - `code` follows the same `domain.subcode` convention as error codes (see §5).
 - `message` is human-readable and **not** stability-covered. Code-driven branching only on `code`.
-- `context` is an open-ended object whose **keys** are stability-covered per code (i.e., once `syncignored.skipped` documents a `file` key, that key is preserved within v1.x). New keys may be added; existing keys won't be removed or repurposed.
+- `context` is an open-ended object whose **keys** are stability-covered per code (i.e., once `sync.skipped` documents a `file` key, that key is preserved within v1.x). New keys may be added; existing keys won't be removed or repurposed.
 - An empty array `[]` and a missing field MUST be treated as equivalent. Clients should default to `[]` when absent for forward compatibility.
+
+**Known warning codes (v1.0):**
+
+| Code | Emitted by | Context keys |
+|------|-----------|--------------|
+| `sync.copied` | `new-path --json` | `file` (string), `dry_run` (bool, only when true) |
+| `sync.skipped` | `new-path --json` | `file` (string), `reason` (string: `blacklisted`, `too_large`, `not_regular`, `read_error`), `size` (int, when known) |
+| `sync.failed` | `new-path --json` | — (`message` carries the cause) |
+| `sync.config_error` | `new-path --json` | — (`message` carries the parse error; sync continues with defaults) |
 
 The error envelope's `error.context` follows the same rules: optional, code-keyed, additive.
 
@@ -199,7 +208,7 @@ The error envelope's `error.context` follows the same rules: optional, code-keye
 | `worktree_path` | string (abs) | Path of the newly created worktree | stable |
 | `branch` | string | The branch the worktree is checked out to (echoes the requested name) | stable |
 
-> **Implementation note:** in JSON mode, `new-path` does **not** run the ignored-file sync that the human path runs. JSON callers are expected to manage env-file propagation themselves (or invoke a future explicit `sync` subcommand). This is a deliberate split between human and agent ergonomics — see `runSyncIgnored` doc comment in `internal/app/run.go`. **`[DECIDE]` whether to expose a `--sync` opt-in in JSON mode for v1.1 with results surfaced via `warnings`.**
+**Sync behavior:** `new-path --json` copies the same git-ignored files (`.env`, local config) that `ww new` copies, by default. Sync is best-effort: failures and per-file outcomes are reported via the envelope's `warnings` array (codes `sync.copied`, `sync.skipped`, `sync.failed`, `sync.config_error`) and never fail the operation. Pass `--no-sync` to opt out, or `--sync-dry-run` to report what would be copied without writing files. This makes the JSON surface behaviorally consistent with the human surface and with `ww_new` over MCP.
 
 ### 4.3 `switch-path` — RAW STDOUT, OUT OF CONTRACT
 
@@ -456,6 +465,6 @@ Still open:
 - [x] Add `ww-helper version --json` command *(done in `feat/protocol-v1.0`)*
 - [ ] Wire `binaryVersion` ldflags injection into `scripts/release.sh` (separate PR; default `"dev"` works in the meantime)
 - [ ] Audit `kept_branch_reason` enumeration completeness
-- [ ] §4.2: should `new-path --json` accept opt-in `--sync` and surface results in `warnings`?
+- [x] §4.2: `new-path --json` defaults to sync, results surface via `warnings` *(landed; see §3.4 / §4.2)*
 - [ ] §6: freeze `list --filter` grammar or keep out-of-contract for 1.0?
 - [ ] §10: scope and design `ww-helper mcp serve` MVP
