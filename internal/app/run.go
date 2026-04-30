@@ -180,10 +180,46 @@ func Run(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut
 		return runRemove(ctx, args[1:], in, out, errOut, deps)
 	case "version":
 		return runVersion(args[1:], out, errOut)
+	case "mcp":
+		return runMCP(ctx, args[1:], errOut, deps)
 	default:
 		return runSwitchPath(ctx, args, in, out, errOut, deps)
 	}
 }
+
+// runMCP dispatches `ww-helper mcp <subcommand>`. Currently the only
+// supported subcommand is `serve`. The whole MCP server lives in package
+// internal/mcp; this function is the thin CLI entrypoint.
+//
+// stdout is reserved for the MCP JSON-RPC transport; only errOut receives
+// human-readable diagnostics. We never call writeJSONSuccess/writeCommandError
+// here because those write to stdout — and even outside an active server
+// session, an MCP-aware caller should still be able to invoke
+// `ww-helper mcp` defensively without seeing stray JSON envelopes.
+func runMCP(ctx context.Context, args []string, errOut io.Writer, deps Deps) int {
+	if len(args) != 1 || args[0] != "serve" {
+		fmt.Fprintln(errOut, "usage: ww-helper mcp serve")
+		return 2
+	}
+	if MCPServe == nil {
+		fmt.Fprintln(errOut, "mcp serve: server is not wired in this binary")
+		return 1
+	}
+	if err := MCPServe(ctx, deps, binaryVersion, errOut); err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
+	return 0
+}
+
+// MCPServe is the entry point for the MCP server. It is set by
+// cmd/ww-helper/main.go at startup to break the import cycle:
+// internal/mcp depends on internal/app for ListData/NewPathData/etc.,
+// so internal/app cannot import internal/mcp directly.
+//
+// The variable stays nil in test binaries and tools that don't link the
+// MCP server; runMCP guards against that case explicitly.
+var MCPServe func(ctx context.Context, deps Deps, binaryVersion string, errOut io.Writer) error
 
 func runVersion(args []string, out io.Writer, errOut io.Writer) int {
 	jsonMode := false

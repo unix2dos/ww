@@ -20,6 +20,18 @@ import (
 	"ww/internal/worktree"
 )
 
+// ErrorCode returns the protocol-level `code` for an error originating in
+// this package, or "" if err is not one of the package's typed errors. It
+// is the cross-package way to ask "what does the JSON envelope's
+// error.code say?" without importing private types.
+func ErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	classified := classifyError(err)
+	return classified.Code
+}
+
 // Warning is one entry in an envelope's `warnings` array. Codes follow the
 // `domain.subcode` convention (sync.copied, sync.skipped, sync.failed, …)
 // and are stable within a v1.x major; messages and context keys may evolve.

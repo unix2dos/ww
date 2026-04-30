@@ -436,11 +436,39 @@ A change is "breaking" if it would cause an existing well-formed client to misin
 - A minimal Go client showing envelope parsing (`examples/client.go`)
 - A `ww-helper mcp serve` mode (planned, see §10)
 
-## 10. Future: `ww-helper mcp serve`
+## 10. `ww-helper mcp serve`
 
-Planned but not yet implemented. Will expose the v1.0 commands as MCP tools so any MCP-aware agent (Claude Code, Cursor, Zed, etc.) can call `ww-helper` without subprocess marshalling. The MCP tool schemas will be a 1:1 mirror of the JSON envelopes documented here.
+Runs an MCP server over stdio so any MCP-aware agent can call ww-helper natively. Six tools, one per v1.0 command:
 
-Tracking: `[TODO add issue link]`.
+| MCP tool | Maps to | Notes |
+|----------|---------|-------|
+| `ww_list` | `list --json` | Filter expressions accepted but currently dropped (out-of-contract per §6) |
+| `ww_new` | `new-path --json` | Defaults to sync; pass `no_sync: true` to skip |
+| `ww_remove` | `rm --json` | Refuses current worktree; refuses dirty without `force: true` |
+| `ww_gc` | `gc --json` | At least one of `ttl_expired`, `idle`, `merged` is required |
+| `ww_switch_path` | `switch-path` (raw) | **Returns the path inside an MCP envelope** — the §4.3 raw-stdout carve-out only applied to shell-eval; MCP wraps it normally |
+| `ww_version` | `version --json` | |
+
+Tool schemas are generated from the same Go structs the CLI uses to marshal `--json` output, so the field names and types match this document one-for-one.
+
+**Errors:** when a tool fails, the MCP `CallToolResult.isError` is `true` and `content[0].text` is a single JSON line `{"code": "...", "message": "...", "context": {...}}` mirroring the CLI envelope's `error` object. Agents should branch on `code` exactly as they would for a subprocess invocation.
+
+**Warnings:** for `ww_new`, sync results (`sync.copied`, `sync.skipped`, etc. — see §3.4) are emitted as additional `TextContent` blocks alongside the structured result. Agents that need them parse each text block as JSON `{"warning": {...}}`.
+
+**Stdio hygiene:** while `mcp serve` is running, stdout is reserved for the MCP JSON-RPC transport. Any human-readable diagnostic goes to stderr. Do not pipe the server's stdout anywhere except into an MCP client.
+
+**Server identity:**
+
+```json
+{
+  "name": "ww",
+  "version": "<binaryVersion>"
+}
+```
+
+`name` is intentionally `"ww"` (the brand) rather than the binary name `"ww-helper"`. Agents locate the binary via the config block's `command` field — the server name is for display only.
+
+**Implementation:** `internal/mcp/` (server, tools, translation). The `mcp serve` subcommand is wired in `internal/app/run.go`; `MCPServe` is injected by `cmd/ww-helper/main.go` to break the import cycle (the MCP package depends on app for the `*Data` functions).
 
 ---
 
@@ -467,4 +495,4 @@ Still open:
 - [ ] Audit `kept_branch_reason` enumeration completeness
 - [x] §4.2: `new-path --json` defaults to sync, results surface via `warnings` *(landed; see §3.4 / §4.2)*
 - [ ] §6: freeze `list --filter` grammar or keep out-of-contract for 1.0?
-- [ ] §10: scope and design `ww-helper mcp serve` MVP
+- [x] §10: `ww-helper mcp serve` shipped *(landed in v0.12.0; see §10 for the tool list)*

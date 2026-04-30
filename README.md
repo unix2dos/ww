@@ -57,7 +57,28 @@ For the fastest interactive switch, install `fzf`. If `fzf` is not on PATH, `ww`
 
 ## For AI agents and orchestrators
 
-`ww-helper` is the machine-readable interface. Every `--json` command emits a single-line envelope conforming to a [versioned wire protocol](docs/protocol.md):
+Two ways to call `ww-helper` from an agent — pick whichever fits the agent's plumbing.
+
+### Over MCP (recommended for Claude Code, Cursor, Zed, …)
+
+Add one block to your MCP config and every worktree command becomes a typed tool. No subprocess marshalling, no JSON parsing in the agent.
+
+```json
+{
+  "mcpServers": {
+    "ww": {
+      "command": "ww-helper",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+The server exposes six tools backed by the same v1.0 wire protocol the CLI uses: `ww_list`, `ww_new`, `ww_remove`, `ww_gc`, `ww_switch_path`, `ww_version`. Schemas are generated from the same Go structs the CLI marshals, so the data shape is identical across both transports.
+
+### As a subprocess (any agent / shell script)
+
+Every `--json` command emits a single-line envelope conforming to the [versioned wire protocol](docs/protocol.md):
 
 ```bash
 ww-helper version --json
