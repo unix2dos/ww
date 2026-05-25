@@ -53,7 +53,7 @@ func TestRunHelperHelpPrintsUsageAndExitsZero(t *testing.T) {
 	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("fzf when available")) {
 		t.Fatalf("expected help to mention auto fzf routing, got %q", got)
 	}
-	if got := stdout.String(); !strings.Contains(got, "[IDLE] temporary = clean detached worktree with no commits beyond the base branch") {
+	if got := stdout.String(); !strings.Contains(got, "[IDLE] temporary = clean detached worktree with no commits beyond the status base") {
 		t.Fatalf("expected help to explain idle temporary worktrees, got %q", got)
 	}
 	if stderr.Len() != 0 {
@@ -343,9 +343,9 @@ func TestRunListHelpPrintsCommandHelp(t *testing.T) {
 		"Usage: ww list [--verbose] [--json]",
 		"Shows worktrees without switching.",
 		"[CURRENT]  current shell worktree",
-		"[MERGED]   branch already merged into the base branch",
+		"[MERGED]   branch already merged into the status base",
 		"[IDLE]     temporary detached worktree with no local work",
-		"temporary  detached worktree with clean files and no commits beyond base",
+		"temporary  detached worktree with clean files and no commits beyond status base",
 		"unbranched detached worktree with commits; review before removing",
 	} {
 		if !strings.Contains(got, want) {
@@ -841,6 +841,43 @@ func TestRunListJSONIncludesMetadataFields(t *testing.T) {
 	}
 }
 
+func TestRunListJSONIncludesStatusBaseRef(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey:    "/repo/.git",
+		statusBase: git.StatusBase{Ref: "origin/HEAD"},
+		worktrees: []worktree.Worktree{
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		},
+	}
+
+	code := Run(context.Background(), []string{"list", "--json"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	envelope := decodeEnvelope(t, stdout.String())
+	if envelope.Protocol != "1.1" {
+		t.Fatalf("expected protocol 1.1, got %q", envelope.Protocol)
+	}
+	var items []struct {
+		Branch        string `json:"branch"`
+		StatusBaseRef string `json:"status_base_ref"`
+	}
+	decodeEnvelopeData(t, envelope, &items)
+
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %#v", items)
+	}
+	if items[0].Branch != "alpha" || items[0].StatusBaseRef != "origin/HEAD" {
+		t.Fatalf("unexpected status base payload: %#v", items[0])
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
 func TestRunListVerboseShowsLabelAndTTL(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -868,6 +905,57 @@ func TestRunListVerboseShowsLabelAndTTL(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "agent:claude") || !strings.Contains(stdout.String(), "24h") {
 		t.Fatalf("expected verbose output to include metadata, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunListVerboseShowsStatusBaseRef(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	deps := fakeDeps{
+		repoKey:    "/repo/.git",
+		statusBase: git.StatusBase{Ref: "origin/HEAD"},
+		worktrees: []worktree.Worktree{
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		},
+	}
+
+	code := Run(context.Background(), []string{"list", "--verbose"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "status_base_ref=origin/HEAD") {
+		t.Fatalf("expected verbose output to include status base, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", stderr.String())
+	}
+}
+
+func TestRunListUsesStatusBaseForDisplayAnnotation(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	annotatedBase := ""
+	deps := fakeDeps{
+		repoKey:       "/repo/.git",
+		defaultBranch: "main",
+		statusBase:    git.StatusBase{Ref: "origin/HEAD"},
+		annotatedBase: &annotatedBase,
+		worktrees: []worktree.Worktree{
+			{Path: "/repo/.worktrees/alpha", BranchLabel: "alpha"},
+		},
+	}
+
+	code := Run(context.Background(), []string{"list"}, bytes.NewReader(nil), stdout, stderr, deps)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if annotatedBase != "origin/HEAD" {
+		t.Fatalf("expected display annotation to use origin/HEAD, got %q", annotatedBase)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
@@ -1167,6 +1255,7 @@ func TestRunGCSkipsDirtyAndActiveWorktrees(t *testing.T) {
 	deps := fakeDeps{
 		repoKey:       "/repo/.git",
 		defaultBranch: "main",
+		statusBase:    git.StatusBase{Ref: "origin/HEAD"},
 		removed:       removed,
 		worktrees: []worktree.Worktree{
 			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
@@ -1238,6 +1327,7 @@ func TestRunGCForceAllowsDirtyRemoval(t *testing.T) {
 	deps := fakeDeps{
 		repoKey:       "/repo/.git",
 		defaultBranch: "main",
+		statusBase:    git.StatusBase{Ref: "origin/HEAD"},
 		removed:       removed,
 		worktrees: []worktree.Worktree{
 			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
@@ -1283,6 +1373,7 @@ func TestRunGCMergedUsesBaseBranchResolution(t *testing.T) {
 	deps := fakeDeps{
 		repoKey:       "/repo/.git",
 		defaultBranch: "main",
+		statusBase:    git.StatusBase{Ref: "origin/HEAD"},
 		removed:       removed,
 		worktrees: []worktree.Worktree{
 			{Path: "/repo", BranchLabel: "main", IsCurrent: true},
@@ -2832,6 +2923,9 @@ type fakeDeps struct {
 	worktreeGitPathCall   *gitPathCall
 	defaultBranch         string
 	defaultBranchErr      error
+	statusBase            git.StatusBase
+	statusBaseErr         error
+	annotatedBase         *string
 	previews              map[string]git.RemovalPreview
 	previewErr            error
 	removeResult          git.RemoveResult
@@ -3020,7 +3114,20 @@ func (f fakeDeps) DefaultBranch(context.Context) (string, error) {
 	return f.defaultBranch, nil
 }
 
+func (f fakeDeps) DefaultStatusBase(context.Context) (git.StatusBase, error) {
+	if f.statusBaseErr != nil {
+		return git.StatusBase{}, f.statusBaseErr
+	}
+	if f.statusBase.Ref == "" && f.defaultBranch != "" {
+		return git.StatusBase{Ref: f.defaultBranch}, nil
+	}
+	return f.statusBase, nil
+}
+
 func (f fakeDeps) AnnotateExtendedStatus(_ context.Context, items []worktree.Worktree, baseBranch string) error {
+	if f.annotatedBase != nil {
+		*f.annotatedBase = baseBranch
+	}
 	// Tests set fields directly on worktree items, so this is a no-op
 	return nil
 }

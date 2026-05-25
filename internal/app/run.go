@@ -48,6 +48,7 @@ type Deps interface {
 	RecordWorktreeState(ctx context.Context, repoKey, path string, meta state.WorktreeMetadata) error
 	WorktreeGitPath(ctx context.Context, worktreePath string, rel string) (string, error)
 	DefaultBranch(ctx context.Context) (string, error)
+	DefaultStatusBase(ctx context.Context) (git.StatusBase, error)
 	AnnotateExtendedStatus(ctx context.Context, items []worktree.Worktree, baseBranch string) error
 	PreviewRemoval(ctx context.Context, item worktree.Worktree, baseBranch string) (git.RemovalPreview, error)
 	RemoveWorktree(ctx context.Context, item worktree.Worktree, opts git.RemoveOptions) (git.RemoveResult, error)
@@ -141,6 +142,10 @@ func (d RealDeps) WorktreeGitPath(ctx context.Context, worktreePath string, rel 
 
 func (d RealDeps) DefaultBranch(ctx context.Context) (string, error) {
 	return git.DefaultBranch(ctx, git.ExecRunner{})
+}
+
+func (d RealDeps) DefaultStatusBase(ctx context.Context) (git.StatusBase, error) {
+	return git.DefaultStatusBase(ctx, git.ExecRunner{})
 }
 
 func (d RealDeps) AnnotateExtendedStatus(ctx context.Context, items []worktree.Worktree, baseBranch string) error {
@@ -290,16 +295,16 @@ func runInit(args []string, out io.Writer, errOut io.Writer) int {
 	return 0
 }
 
-// annotateExtendedStatusBestEffort calls AnnotateExtendedStatus if DefaultBranch
+// annotateExtendedStatusBestEffort calls AnnotateExtendedStatus if DefaultStatusBase
 // can be resolved. Errors are swallowed — if git commands fail, the list shows
 // with basic info only.
 func annotateExtendedStatusBestEffort(ctx context.Context, deps Deps, items []worktree.Worktree) string {
-	baseBranch, err := deps.DefaultBranch(ctx)
-	if err != nil {
+	statusBase, err := deps.DefaultStatusBase(ctx)
+	if err != nil || statusBase.Ref == "" {
 		return ""
 	}
-	_ = deps.AnnotateExtendedStatus(ctx, items, baseBranch)
-	return baseBranch
+	_ = deps.AnnotateExtendedStatus(ctx, items, statusBase.Ref)
+	return statusBase.Ref
 }
 
 func decorateDetachedWorktreesForSelection(ctx context.Context, deps Deps, items []worktree.Worktree, baseBranch string) {
@@ -445,7 +450,7 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 	}
 	warnStateIssue(errOut, warn)
 
-	baseBranch := annotateExtendedStatusForList(ctx, deps, items)
+	statusBaseRef := annotateExtendedStatusForList(ctx, deps, items)
 	displayRoot := mainWorktreeRootFromRepoKey(repoKey)
 
 	entries := decorateListEntries(items, metadata)
@@ -459,7 +464,7 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 
 	tableEntries := make([]ui.ListTableEntry, 0, len(entries))
 	for _, entry := range entries {
-		tableEntries = append(tableEntries, listTableEntry(ctx, deps, entry, cfg.verbose, baseBranch, displayRoot))
+		tableEntries = append(tableEntries, listTableEntry(ctx, deps, entry, cfg.verbose, statusBaseRef, displayRoot))
 	}
 	fmt.Fprintln(out, ui.FormatListTableWithOptions(tableEntries, ui.ListTableOptions{
 		ShowEmptyOptionalColumns: cfg.verbose,
@@ -474,29 +479,29 @@ func runList(ctx context.Context, args []string, out io.Writer, errOut io.Writer
 }
 
 func annotateExtendedStatusForList(ctx context.Context, deps Deps, items []worktree.Worktree) string {
-	baseBranch, err := deps.DefaultBranch(ctx)
-	if err != nil {
+	statusBase, err := deps.DefaultStatusBase(ctx)
+	if err != nil || statusBase.Ref == "" {
 		return ""
 	}
-	_ = deps.AnnotateExtendedStatus(ctx, items, baseBranch)
-	return baseBranch
+	_ = deps.AnnotateExtendedStatus(ctx, items, statusBase.Ref)
+	return statusBase.Ref
 }
 
-func listTableEntry(ctx context.Context, deps Deps, entry listEntry, verbose bool, baseBranch string, displayRoot string) ui.ListTableEntry {
+func listTableEntry(ctx context.Context, deps Deps, entry listEntry, verbose bool, statusBaseRef string, displayRoot string) ui.ListTableEntry {
 	item := entry.item
 	if !verbose {
 		item.Path = listDisplayPath(item.Path, displayRoot)
 	}
 	parts := make([]string, 0, 2)
 	status := ""
-	if detached, ok := listDetachedPresentation(ctx, deps, entry.item, baseBranch); ok {
+	if detached, ok := listDetachedPresentation(ctx, deps, entry.item, statusBaseRef); ok {
 		item = worktreeWithDetachedPresentation(item, detached)
 		status = detached.status
 		if detached.detail != "" {
 			parts = append(parts, detached.detail)
 		}
 	}
-	if verboseDetail := listVerboseDetail(ctx, deps, entry, verbose); verboseDetail != "" {
+	if verboseDetail := listVerboseDetail(ctx, deps, entry, verbose, statusBaseRef); verboseDetail != "" {
 		parts = append(parts, verboseDetail)
 	}
 	return ui.ListTableEntry{
@@ -592,12 +597,15 @@ func listDetachedPresentation(ctx context.Context, deps Deps, item worktree.Work
 	return detachedListPresentation{branch: "unbranched", detail: summary + "\nlast commit: " + subject}, true
 }
 
-func listVerboseDetail(ctx context.Context, deps Deps, entry listEntry, verbose bool) string {
+func listVerboseDetail(ctx context.Context, deps Deps, entry listEntry, verbose bool, statusBaseRef string) string {
 	if !verbose {
 		return ""
 	}
 
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 5)
+	if statusBaseRef != "" {
+		parts = append(parts, "status_base_ref="+statusBaseRef)
+	}
 	if entry.meta.Label != "" {
 		parts = append(parts, "label="+entry.meta.Label)
 		note, err := readTaskNote(ctx, deps, entry.item.Path, entry.meta.Label)
@@ -1508,7 +1516,7 @@ func writeRemoveHuman(out io.Writer, result git.RemoveResult) {
 
 // protocolVersion is the wire-format version reported in every JSON envelope.
 // See docs/protocol.md for the contract.
-const protocolVersion = "1.0"
+const protocolVersion = "1.1"
 
 // binaryVersion is the build version of the ww-helper binary. Defaults to
 // "dev"; release builds inject the tag via:
@@ -1721,7 +1729,7 @@ func printHelperHelp(out io.Writer) {
 	fmt.Fprintln(out, "gc evaluates explicit cleanup rules and prints matched worktrees.")
 	fmt.Fprintln(out, "rm removes one worktree.")
 	fmt.Fprintln(out, "rm --cleanup removes clearly safe worktrees.")
-	fmt.Fprintln(out, "[IDLE] temporary = clean detached worktree with no commits beyond the base branch.")
+	fmt.Fprintln(out, "[IDLE] temporary = clean detached worktree with no commits beyond the status base.")
 	fmt.Fprintln(out, "version prints the binary and protocol version. Pass --json for the envelope form.")
 	fmt.Fprintln(out, "help prints this command summary.")
 }
@@ -1733,11 +1741,11 @@ func printListHelp(out io.Writer) {
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Status:")
 	fmt.Fprintln(out, "  [CURRENT]  current shell worktree")
-	fmt.Fprintln(out, "  [MERGED]   branch already merged into the base branch")
+	fmt.Fprintln(out, "  [MERGED]   branch already merged into the status base")
 	fmt.Fprintln(out, "  [IDLE]     temporary detached worktree with no local work")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Branch:")
-	fmt.Fprintln(out, "  temporary  detached worktree with clean files and no commits beyond base")
+	fmt.Fprintln(out, "  temporary  detached worktree with clean files and no commits beyond status base")
 	fmt.Fprintln(out, "  unbranched detached worktree with commits; review before removing")
 }
 

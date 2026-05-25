@@ -1,6 +1,6 @@
-# ww-helper Protocol (v1.0-draft)
+# ww-helper Protocol (v1.1)
 
-> **Status:** DRAFT — not yet frozen. Sections marked `[DECIDE]` need a call before v1.0 is published.
+> **Status:** v1.x contract. Minor versions add documented optional fields, commands, or codes without changing existing field meaning.
 >
 > **Audience:** AI agents, orchestrators, IDE plugins, and any tool that wants to script `ww` programmatically.
 >
@@ -23,7 +23,7 @@ The human-facing `ww` command is **not** covered by this contract. Its output ma
 ## 2. Versioning
 
 - The protocol uses **semantic versioning** independent of the `ww` binary version.
-- Current protocol version: **`1.0-draft`** → target stable: **`1.0`**.
+- Current protocol version: **`1.1`**.
 - Within a major version: additive changes only (new commands, new optional fields, new error codes documented as additive).
 - A major version bump (e.g. `2.0`) is required to remove or change the meaning of an existing field.
 - Every JSON envelope carries a top-level `"protocol"` field whose value is the semver string of the contract that envelope conforms to (e.g. `"1.0"`). Clients should branch on the **major** component only; minor bumps are guaranteed additive.
@@ -39,7 +39,7 @@ Every JSON output from `ww-helper --json` is a single line of UTF-8 JSON written
 
 ```json
 {
-  "protocol": "1.0",
+  "protocol": "1.1",
   "ok": true,
   "command": "<command-name>",
   "data": <command-specific payload>,
@@ -51,7 +51,7 @@ Every JSON output from `ww-helper --json` is a single line of UTF-8 JSON written
 
 ```json
 {
-  "protocol": "1.0",
+  "protocol": "1.1",
   "ok": false,
   "command": "<command-name>",
   "error": {
@@ -126,7 +126,7 @@ The error envelope's `error.context` follows the same rules: optional, code-keye
 
 ```json
 {
-  "protocol": "1.0",
+  "protocol": "1.1",
   "ok": true,
   "command": "list",
   "data": [
@@ -142,6 +142,7 @@ The error envelope's `error.context` follows the same rules: optional, code-keye
       "merged": false,
       "ahead": 2,
       "behind": 0,
+      "status_base_ref": "origin/HEAD",
       "staged": 0,
       "unstaged": 1,
       "untracked": 3
@@ -163,12 +164,18 @@ The error envelope's `error.context` follows the same rules: optional, code-keye
 | `last_used_at` | int (unix milliseconds) | Last time this worktree was switched into via `ww`. `0` = never | stable |
 | `label` | string | Free-form metadata label set at creation; `""` if none | stable |
 | `ttl` | string | Duration string (`"24h"`, `"7d"`); `""` if none | stable |
-| `merged` | bool | Branch is merged into the base branch | stable |
-| `ahead` | int | Commits ahead of base branch | stable |
-| `behind` | int | Commits behind base branch | stable |
+| `merged` | bool | Branch is merged into the display status base ref | stable |
+| `ahead` | int | Commits ahead of the display status base ref | stable |
+| `behind` | int | Commits behind the display status base ref | stable |
+| `status_base_ref` | string | Git ref used for `merged`, `ahead`, and `behind`; `""` when status enhancement could not resolve a base. Added in 1.1 | stable since 1.1 |
 | `staged` | int | Count of staged changes | stable |
 | `unstaged` | int | Count of unstaged changes | stable |
 | `untracked` | int | Count of untracked files | stable |
+
+`status_base_ref` is display-only. It is resolved without running `git fetch`,
+using `origin/HEAD`, then `origin/<default-branch>`, then the local default
+branch when remote refs are unavailable. Cleanup and removal commands keep
+their own conservative base checks.
 
 > **Implementation status:** as of `feat/protocol-v1.0`, the binary emits both timestamps in unix milliseconds via the `nanosToMillis` helper. Internal storage stays in nanoseconds; only the JSON output is converted.
 
@@ -190,7 +197,7 @@ The error envelope's `error.context` follows the same rules: optional, code-keye
 
 ```json
 {
-  "protocol": "1.0",
+  "protocol": "1.1",
   "ok": true,
   "command": "new-path",
   "data": {
@@ -238,7 +245,7 @@ If you need structured output for resolution, use `list --json` and resolve clie
 
 ```json
 {
-  "protocol": "1.0",
+  "protocol": "1.1",
   "ok": true,
   "command": "gc",
   "data": {
@@ -282,7 +289,7 @@ If you need structured output for resolution, use `list --json` and resolve clie
 
 ```json
 {
-  "protocol": "1.0",
+  "protocol": "1.1",
   "ok": true,
   "command": "version",
   "data": {
@@ -322,7 +329,7 @@ The protocol version is intentionally **not** duplicated inside `data` — it al
 
 ```json
 {
-  "protocol": "1.0",
+  "protocol": "1.1",
   "ok": true,
   "command": "rm",
   "data": {
@@ -425,7 +432,7 @@ Process for evolving this contract:
 3. **New error code or warning code:** PR; add to §5 / §3.4; bump minor.
 4. **Breaking change:** requires a `2.0` cycle. No exceptions within `1.x`.
 
-A change is "breaking" if it would cause an existing well-formed client to misinterpret the response. Renaming a field, narrowing a type, removing an enum value, or repurposing an exit code are all breaking. Adding a field, adding an enum value, or relaxing a type (e.g. `string` → `string|null`) is **also** breaking unless explicitly carved out at v1.0 (it isn't).
+A change is "breaking" if it would cause an existing well-formed client to misinterpret the response. Renaming a field, narrowing a type, removing an enum value, changing an existing field's meaning, or repurposing an exit code are all breaking. Adding a documented optional field, enum value, command, warning code, or error code is additive within v1.x and requires a minor version bump.
 
 ---
 
@@ -438,7 +445,7 @@ A change is "breaking" if it would cause an existing well-formed client to misin
 
 ## 10. `ww-helper mcp serve`
 
-Runs an MCP server over stdio so any MCP-aware agent can call ww-helper natively. Six tools, one per v1.0 command:
+Runs an MCP server over stdio so any MCP-aware agent can call ww-helper natively. Six tools, one per JSON-capable command:
 
 | MCP tool | Maps to | Notes |
 |----------|---------|-------|
@@ -481,7 +488,7 @@ Schema-level errors come from the SDK before any ww code runs, so they don't car
 
 ---
 
-## 11. Open decisions before freezing v1.0
+## 11. Historical v1.0 Checklist
 
 Resolved:
 

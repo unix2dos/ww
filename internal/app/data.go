@@ -44,23 +44,24 @@ type Warning struct {
 }
 
 // WorktreeView is the protocol-aligned view of one worktree. The field names
-// and types match the v1.0 wire contract for `list --json`; in-process
+// and types match the v1.1 wire contract for `list --json`; in-process
 // callers (notably the MCP server) marshal these directly to clients.
 type WorktreeView struct {
-	Path       string `json:"path"`
-	Branch     string `json:"branch"`
-	Dirty      bool   `json:"dirty"`
-	Active     bool   `json:"active"`
-	CreatedAt  int64  `json:"created_at"`   // unix milliseconds; 0 if unknown
-	LastUsedAt int64  `json:"last_used_at"` // unix milliseconds; 0 if never
-	Label      string `json:"label"`
-	TTL        string `json:"ttl"`
-	Merged     bool   `json:"merged"`
-	Ahead      int    `json:"ahead"`
-	Behind     int    `json:"behind"`
-	Staged     int    `json:"staged"`
-	Unstaged   int    `json:"unstaged"`
-	Untracked  int    `json:"untracked"`
+	Path          string `json:"path"`
+	Branch        string `json:"branch"`
+	Dirty         bool   `json:"dirty"`
+	Active        bool   `json:"active"`
+	CreatedAt     int64  `json:"created_at"`   // unix milliseconds; 0 if unknown
+	LastUsedAt    int64  `json:"last_used_at"` // unix milliseconds; 0 if never
+	Label         string `json:"label"`
+	TTL           string `json:"ttl"`
+	Merged        bool   `json:"merged"`
+	Ahead         int    `json:"ahead"`
+	Behind        int    `json:"behind"`
+	StatusBaseRef string `json:"status_base_ref"`
+	Staged        int    `json:"staged"`
+	Unstaged      int    `json:"unstaged"`
+	Untracked     int    `json:"untracked"`
 }
 
 // ListOptions configures ListData. Reserved for future per-call options;
@@ -97,7 +98,7 @@ type GCItem struct {
 	Reason       string   `json:"reason,omitempty"` // populated when Action == "skipped"
 }
 
-// GCResult is the v1.0 wire shape of `gc --json`.
+// GCResult is the v1.x wire shape of `gc --json`.
 type GCResult struct {
 	Summary GCSummary `json:"summary"`
 	Items   []GCItem  `json:"items"`
@@ -238,7 +239,7 @@ type RemoveOptions struct {
 	Force  bool
 }
 
-// RemoveResult is the v1.0 wire shape of `rm --json`.
+// RemoveResult is the v1.x wire shape of `rm --json`.
 type RemoveResult struct {
 	WorktreePath     string `json:"worktree_path"`
 	Branch           string `json:"branch"`
@@ -385,7 +386,7 @@ func SwitchPathData(ctx context.Context, deps Deps, target string) (SwitchPathRe
 	return SwitchPathResult{Path: selected.Path}, nil
 }
 
-// VersionResult is the v1.0 wire shape of `version --json`. The protocol
+// VersionResult is the v1.x wire shape of `version --json`. The protocol
 // version is reported via the envelope's top-level `protocol` field, not
 // inside `data`, to avoid skew between the two.
 type VersionResult struct {
@@ -453,7 +454,7 @@ type NewPathOptions struct {
 	SyncDryRun bool
 }
 
-// NewPathResult is the v1.0 wire shape of `new-path --json`.
+// NewPathResult is the v1.x wire shape of `new-path --json`.
 type NewPathResult struct {
 	WorktreePath string `json:"worktree_path"`
 	Branch       string `json:"branch"`
@@ -578,7 +579,7 @@ func ListData(ctx context.Context, deps Deps, opts ListOptions) ([]WorktreeView,
 		return nil, nil, err
 	}
 
-	annotateExtendedStatusBestEffort(ctx, deps, items)
+	statusBaseRef := annotateExtendedStatusBestEffort(ctx, deps, items)
 
 	entries := decorateListEntries(items, metadata)
 
@@ -586,20 +587,21 @@ func ListData(ctx context.Context, deps Deps, opts ListOptions) ([]WorktreeView,
 	for _, entry := range entries {
 		item := entry.item
 		views = append(views, WorktreeView{
-			Path:       item.Path,
-			Branch:     item.BranchLabel,
-			Dirty:      item.IsDirty,
-			Active:     item.IsCurrent,
-			CreatedAt:  nanosToMillis(item.CreatedAt),
-			LastUsedAt: nanosToMillis(entry.meta.LastUsedAt),
-			Label:      entry.meta.Label,
-			TTL:        entry.meta.TTL,
-			Merged:     item.IsMerged,
-			Ahead:      item.Ahead,
-			Behind:     item.Behind,
-			Staged:     item.Staged,
-			Unstaged:   item.Unstaged,
-			Untracked:  item.Untracked,
+			Path:          item.Path,
+			Branch:        item.BranchLabel,
+			Dirty:         item.IsDirty,
+			Active:        item.IsCurrent,
+			CreatedAt:     nanosToMillis(item.CreatedAt),
+			LastUsedAt:    nanosToMillis(entry.meta.LastUsedAt),
+			Label:         entry.meta.Label,
+			TTL:           entry.meta.TTL,
+			Merged:        item.IsMerged,
+			Ahead:         item.Ahead,
+			Behind:        item.Behind,
+			StatusBaseRef: statusBaseRef,
+			Staged:        item.Staged,
+			Unstaged:      item.Unstaged,
+			Untracked:     item.Untracked,
 		})
 	}
 

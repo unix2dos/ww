@@ -1,4 +1,4 @@
-// Package mcp exposes ww-helper's v1.0 wire protocol as MCP tools so any
+// Package mcp exposes ww-helper's v1.x wire protocol as MCP tools so any
 // MCP-aware agent (Claude Code, Cursor, Zed, Continue, Cline, Codex, …)
 // can call ww-helper natively over stdio without subprocess marshalling.
 //

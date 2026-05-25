@@ -114,7 +114,7 @@ If you installed into Bash, reload `~/.bashrc` instead.
 
 ### For AI Agents
 
-Two integration paths — pick whichever fits the agent. Both are backed by the same v1.0 wire protocol; see [`protocol.md`](protocol.md) for the formal contract.
+Two integration paths — pick whichever fits the agent. Both are backed by the same v1.1 wire protocol; see [`protocol.md`](protocol.md) for the formal contract.
 
 **Over MCP** (Claude Code, Cursor, Zed, Continue, Cline, Codex, …):
 
@@ -144,7 +144,7 @@ Successful `--json` responses:
 
 ```json
 {
-  "protocol": "1.0",
+  "protocol": "1.1",
   "ok": true,
   "command": "list",
   "data": { ... },
@@ -156,7 +156,7 @@ Error responses:
 
 ```json
 {
-  "protocol": "1.0",
+  "protocol": "1.1",
   "ok": false,
   "command": "rm",
   "error": {
@@ -181,9 +181,12 @@ Returns an array of worktrees. Each entry has:
 - `last_used_at` — unix milliseconds; `0` if never
 - `label` — free-form metadata string; `""` if none
 - `ttl` — duration string (`"24h"`, `"7d"`); `""` if none
-- `merged` — branch is merged into the base branch
-- `ahead` / `behind` — commits ahead/behind the base branch
+- `merged` — branch is merged into the display status base ref
+- `ahead` / `behind` — commits ahead/behind the display status base ref
+- `status_base_ref` — ref used for `merged`, `ahead`, and `behind`; usually `origin/HEAD`, then `origin/<default>`, then the local default branch when remote refs are unavailable
 - `staged` / `unstaged` / `untracked` — change counts
+
+Status display never runs `git fetch`; remote refs are local cached tracking refs. Cleanup and removal safety still use their own conservative base checks.
 
 #### `ww-helper new-path --json --label agent:claude-code --ttl 24h -m "Fix login redirect" feat-a`
 

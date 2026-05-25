@@ -96,7 +96,7 @@ args = ["mcp", "serve"]
 
 After adding the config, restart the agent (Cursor auto-reloads). In Claude Code, run `/mcp` and confirm `ww` appears with the six `ww_*` tools.
 
-The server exposes six tools backed by the same v1.0 wire protocol the CLI uses: `ww_list`, `ww_new`, `ww_remove`, `ww_gc`, `ww_switch_path`, `ww_version`. Schemas are generated from the same Go structs the CLI marshals, so the data shape is identical across both transports.
+The server exposes six tools backed by the same v1.1 wire protocol the CLI uses: `ww_list`, `ww_new`, `ww_remove`, `ww_gc`, `ww_switch_path`, `ww_version`. Schemas are generated from the same Go structs the CLI marshals, so the data shape is identical across both transports.
 
 ### As a subprocess (any agent / shell script)
 
@@ -113,8 +113,8 @@ ww-helper rm --json feat-demo
 Envelope shape:
 
 ```json
-{"protocol":"1.0","ok":true,"command":"list","data":[...],"warnings":[]}
-{"protocol":"1.0","ok":false,"command":"list","error":{"code":"git.repo_missing","message":"...","context":{}}}
+{"protocol":"1.1","ok":true,"command":"list","data":[...],"warnings":[]}
+{"protocol":"1.1","ok":false,"command":"list","error":{"code":"git.repo_missing","message":"...","context":{}}}
 ```
 
 The `protocol` field, the field names inside `data`, and the `domain.subcode` error codes (`worktree.dirty`, `git.repo_missing`, `selector.fzf_not_installed`, …) are stable within v1.x — additive changes only. See [`docs/protocol.md`](docs/protocol.md) for the complete contract, including per-command schemas, exit codes, and what is explicitly **not** covered (`switch-path` is raw stdout for shell-eval; `list --filter` grammar is not yet frozen).

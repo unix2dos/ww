@@ -9,14 +9,14 @@ import (
 	"ww/internal/state"
 )
 
-// registerTools wires the six v1.0 commands as MCP tools. Each tool calls
+// registerTools wires the JSON-capable commands as MCP tools. Each tool calls
 // the matching app.*Data function — the same code path the CLI's JSON
 // subcommands use — so wire-protocol shape and behavior stay identical
 // across CLI subprocess and MCP transport.
 func registerTools(server *mcpsdk.Server, deps app.Deps) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "ww_list",
-		Description: "List git worktrees with status (dirty, ahead/behind, label, ttl, last-used). Prefer over `git worktree list` because it returns the label/ttl/last_used metadata raw git doesn't track. Run before create/switch/remove.",
+		Description: "List git worktrees with status (dirty, ahead/behind, status base ref, label, ttl, last-used). Prefer over `git worktree list` because it returns the label/ttl/last_used metadata raw git doesn't track. Run before create/switch/remove.",
 	}, listHandler(deps))
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
@@ -48,7 +48,7 @@ func registerTools(server *mcpsdk.Server, deps app.Deps) {
 // --- Tool input/output shapes ----------------------------------------------
 //
 // Field-level jsonschema struct tags drive the tool schemas the SDK
-// publishes to clients. Names use snake_case to match the v1.0 wire
+// publishes to clients. Names use snake_case to match the v1.x wire
 // protocol; descriptions are short imperative sentences because they
 // surface verbatim in agent prompts.
 
